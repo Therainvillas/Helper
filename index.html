@@ -1518,23 +1518,52 @@ function modalTask(edit){
 /* ============================================================
    EVENT HANDLERS
    ============================================================ */
+let autoTimer = null;
+let lastHash = '';
+function taskHash(){return S.tasks.map(t=>t.id+':'+t.status+':'+t.updatedAt).join('|');}
 async function syncAndRender(){
   if(!S.settings.url) return;
   await loadGs();
   render();
 }
+function startAutoSync(){
+  if(autoTimer) clearInterval(autoTimer);
+  autoTimer = setInterval(async () => {
+    if(!S.settings.url || !S.role) return;
+    const oldHash = taskHash();
+    const [r, hR] = await Promise.all([gsync('read',{}), gsync('getHistory',{})]);
+    if(r && r.tasks){
+      let merged = r.tasks;
+      if(hR && hR.tasks) merged = [...merged, ...hR.tasks];
+      const newHash = merged.map(t=>t.id+':'+t.status+':'+t.updatedAt).join('|');
+      if(newHash !== oldHash){
+        S.tasks = merged;
+        ss();
+        render();
+      }
+    }
+  }, 8000);
+}
+function stopAutoSync(){
+  if(autoTimer){clearInterval(autoTimer);autoTimer=null;}
+}
 function selRole(r){
   S.role=r;
   S.view=r==='helper'?'tasks':'dashboard';
   render();
-  if(S.settings.url) loadGs().then(render);
+  if(S.settings.url){
+    loadGs().then(() => {
+      render();
+      startAutoSync();
+    });
+  }
   
   // Request FCM token for helpers
   if(r==='helper' && window.requestFCMToken){
     setTimeout(() => window.requestFCMToken(), 1000);
   }
 }
-function goLogin(){S.role=null;S.view='login';render();}
+function goLogin(){stopAutoSync();S.role=null;S.view='login';render();}
 function setV(v){S.view=v;S.filter='all';S.search='';render();}
 function setSV(v){S.view=v;render();}
 
