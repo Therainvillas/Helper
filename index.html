@@ -1,0 +1,1793 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>VillaTask — Manajemen Tugas Helper</title>
+<link rel="icon" type="image/png" href="images/IMG_0146 (2).PNG">
+<link rel="apple-touch-icon" href="images/IMG_0146 (2).PNG">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+
+<!-- Firebase config loader (saved from Settings, falls back to defaults below) -->
+<script>
+try{
+  const s=JSON.parse(localStorage.getItem('vs'));
+  if(s&&s.fcmApiKey)window.__FCM={apiKey:s.fcmApiKey,authDomain:s.fcmAuthDomain,projectId:s.fcmProjectId,bucket:s.fcmBucket,senderId:s.fcmSenderId,appId:s.fcmAppId,vapidKey:s.fcmVapidKey};
+}catch(e){}
+if(!window.__FCM)window.__FCM={};
+// Defaults — replace with your Firebase values
+window.__FCM.apiKey=window.__FCM.apiKey||"AIzaSyBJw8Bp4roUjaU-qniJzEiYTOGeYAFPh98";
+window.__FCM.authDomain=window.__FCM.authDomain||"helper-3931b.firebaseapp.com";
+window.__FCM.projectId=window.__FCM.projectId||"helper-3931b";
+window.__FCM.bucket=window.__FCM.bucket||"helper-3931b.firebasestorage.app";
+window.__FCM.senderId=window.__FCM.senderId||"124156389502";
+window.__FCM.appId=window.__FCM.appId||"1:124156389502:web:e5032723b476c86b5dd02f";
+window.__FCM.vapidKey=window.__FCM.vapidKey||"BB4kgGYwrxD_Od7QTSaFq3_HVZekqmz_NLbSyhAGLklc02oO0uN1yIFPh4Ocabtzrwi2ojiQ_oxL0TMxLXSSCA0";
+</script>
+
+<!-- Firebase FCM (Push Notifications) -->
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+  import { getMessaging, getToken, onMessage } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js';
+
+  const cfg=window.__FCM||{};
+  const firebaseConfig = {
+    apiKey: cfg.apiKey,
+    authDomain: cfg.authDomain,
+    projectId: cfg.projectId,
+    storageBucket: cfg.bucket,
+    messagingSenderId: cfg.senderId,
+    appId: cfg.appId
+  };
+  const vapidKey = cfg.vapidKey;
+
+  let messaging = null;
+  let fcmToken = null;
+
+  try {
+    const app = initializeApp(firebaseConfig);
+    messaging = getMessaging(app);
+  } catch (e) {
+    console.warn('Firebase init failed:', e);
+  }
+
+  // Register service worker for background notifications
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/firebase-messaging-sw.js')
+      .then(reg => {
+        if (messaging) {
+          messaging.useServiceWorker(reg);
+        }
+      })
+      .catch(err => console.warn('SW register failed:', err));
+  }
+
+  // Request permission and get token
+  window.requestFCMToken = async function() {
+    if (!messaging) return null;
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        console.warn('Notification permission denied');
+        return null;
+      }
+      fcmToken = await getToken(messaging, { vapidKey });
+      if (fcmToken) {
+        console.log('FCM Token:', fcmToken);
+        // Send token to GAS backend
+        await registerTokenWithBackend(fcmToken);
+      }
+      return fcmToken;
+    } catch (e) {
+      console.error('FCM token error:', e);
+      return null;
+    }
+  };
+
+  // Foreground message handler
+  if (messaging) {
+    onMessage(messaging, (payload) => {
+      console.log('Foreground message:', payload);
+      const { title, body, ...data } = payload.notification || {};
+      if (title && body) {
+        showLocalNotification(title, body, data);
+      }
+    });
+  }
+
+  async function registerTokenWithBackend(token) {
+    if (!S.settings.url) return;
+    try {
+      await fetch(S.settings.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'registerDevice', token, role: S.role })
+      });
+    } catch (e) {
+      console.warn('Token registration failed:', e);
+    }
+  }
+
+  function showLocalNotification(title, body, data) {
+    // Use native Notification API (works when tab is visible)
+    if (Notification.permission === 'granted') {
+      const notif = new Notification(title, {
+        body,
+        icon: '/icon-192.png',
+        badge: '/badge-72.png',
+        tag: data.taskId || 'villa-task',
+        data
+      });
+      notif.onclick = () => {
+        window.focus();
+        if (data.taskId) {
+          // Navigate to task
+          setV('tasks');
+          S.search = data.taskId;
+          refreshList();
+        }
+        notif.close();
+      };
+    }
+  }
+</script>
+
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --night:#0D1E2D;
+  --night2:#132639;
+  --night3:#1A3249;
+  --teal:#00B4A0;
+  --teal2:#00927F;
+  --teal3:#CCF0EB;
+  --teal4:#E6F9F7;
+  --amber:#F59E0B;
+  --amber2:#FFF8E6;
+  --bg:#EEF2F5;
+  --card:#FFFFFF;
+  --border:#DDE4EA;
+  --border2:#EEF2F5;
+  --text:#1B2D3E;
+  --text2:#546B7E;
+  --text3:#8EA3B4;
+  --text4:#C4D2DB;
+  --crit:#EF4444;--crit-l:#FEF2F2;--crit-m:#FCA5A5;--crit-d:#DC2626;
+  --high:#F97316;--high-l:#FFF7ED;--high-m:#FDBA74;--high-d:#EA580C;
+  --med:#EAB308;--med-l:#FEFCE8;--med-m:#FDE047;--med-d:#CA8A04;
+  --low:#22C55E;--low-l:#F0FDF4;--low-m:#86EFAC;--low-d:#16A34A;
+  --sh1:0 1px 3px rgba(13,30,45,.06);
+  --sh2:0 2px 10px rgba(13,30,45,.08),0 1px 3px rgba(13,30,45,.04);
+  --sh3:0 6px 24px rgba(13,30,45,.10),0 2px 6px rgba(13,30,45,.05);
+  --sh-float:0 16px 48px rgba(13,30,45,.16);
+  --r4:4px;--r8:8px;--r12:12px;--r16:16px;--r20:20px;--r24:24px;--rfull:999px;
+  --fn-h:'Bricolage Grotesque',sans-serif;
+  --fn-b:'DM Sans',sans-serif;
+  --sw:224px;--hw:60px;
+}
+html,body{height:100%;overflow:hidden;}
+body{font-family:var(--fn-b);font-size:14px;color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--teal3);border-radius:2px;}
+
+/* ======= LAYOUT ======= */
+#app{height:100%;display:flex;overflow:hidden;}
+
+/* ======= SIDEBAR ======= */
+.sidebar{
+  width:var(--sw);flex-shrink:0;
+  background:var(--night);
+  display:flex;flex-direction:column;
+  overflow:hidden;
+  transition:width .3s ease;
+  position:relative;z-index:50;
+}
+.sb-logo{
+  padding:20px 16px 18px;
+  display:flex;align-items:center;gap:11px;
+  border-bottom:1px solid rgba(255,255,255,.07);
+  flex-shrink:0;cursor:pointer;
+}
+.sb-logo-icon{
+  width:36px;height:36px;border-radius:var(--r8);
+  background:rgba(0,180,160,.2);border:1px solid rgba(0,180,160,.3);
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  overflow:hidden;
+}
+.sb-logo-icon i{color:var(--teal);font-size:18px;}
+.sb-logo-icon img{width:100%;height:100%;object-fit:cover;}
+.sb-logo-text h2{font-family:var(--fn-h);font-size:15px;font-weight:700;color:#fff;line-height:1.2;}
+.sb-logo-text span{font-size:10px;color:rgba(255,255,255,.35);letter-spacing:.5px;text-transform:uppercase;}
+.sb-nav{flex:1;padding:14px 10px;overflow-y:auto;scrollbar-width:none;}
+.sb-nav::-webkit-scrollbar{display:none;}
+.sb-sec{margin-bottom:20px;}
+.sb-sec-lbl{font-size:10px;font-weight:600;color:rgba(255,255,255,.25);letter-spacing:1px;text-transform:uppercase;padding:0 8px;margin-bottom:5px;}
+.sb-item{
+  display:flex;align-items:center;gap:10px;padding:9px 10px;
+  border-radius:var(--r8);cursor:pointer;border:none;background:none;width:100%;
+  color:rgba(255,255,255,.45);font-family:var(--fn-b);font-size:13.5px;font-weight:500;
+  transition:all .18s;position:relative;text-align:left;
+}
+.sb-item:hover{background:rgba(255,255,255,.07);color:rgba(255,255,255,.8);}
+.sb-item.active{background:rgba(0,180,160,.15);color:#fff;}
+.sb-item.active::before{
+  content:'';position:absolute;left:0;top:20%;bottom:20%;
+  width:3px;background:var(--teal);border-radius:0 2px 2px 0;
+}
+.sb-item i{font-size:18px;flex-shrink:0;}
+.sb-badge{
+  margin-left:auto;min-width:20px;height:20px;
+  background:var(--crit);color:#fff;font-size:10px;font-weight:700;
+  border-radius:var(--rfull);display:flex;align-items:center;justify-content:center;padding:0 5px;
+}
+.sb-bottom{padding:12px 10px;border-top:1px solid rgba(255,255,255,.07);flex-shrink:0;}
+.sb-sync{
+  display:flex;align-items:center;gap:8px;padding:8px 10px;
+  border-radius:var(--r8);background:rgba(255,255,255,.04);
+  font-size:11.5px;color:rgba(255,255,255,.4);margin-bottom:8px;
+}
+.sd{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+.sd.on{background:#22C55E;}
+.sd.off{background:var(--crit);}
+.sd.sync{background:var(--amber);}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:.3;}}
+.sd.on{animation:blink 2s ease-in-out infinite;}
+.sd.sync{animation:blink .5s ease-in-out infinite;}
+.sb-user{
+  display:flex;align-items:center;gap:9px;padding:8px 10px;
+  border-radius:var(--r8);background:rgba(255,255,255,.04);
+  cursor:pointer;transition:background .2s;
+}
+.sb-user:hover{background:rgba(255,255,255,.08);}
+.sb-av{
+  width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:700;color:#fff;flex-shrink:0;
+}
+.sb-av.admin{background:linear-gradient(135deg,#C9923A,#F0D28A);}
+.sb-av.helper{background:linear-gradient(135deg,var(--teal2),var(--teal));}
+.sb-uname{font-size:12px;font-weight:600;color:rgba(255,255,255,.65);}
+.sb-urole{font-size:10px;color:rgba(255,255,255,.3);}
+.sb-logout{margin-left:auto;background:none;border:none;cursor:pointer;color:rgba(255,255,255,.3);padding:4px;border-radius:var(--r4);transition:color .2s;}
+.sb-logout:hover{color:rgba(255,255,255,.7);}
+.sb-logout i{font-size:16px;}
+
+/* ======= MAIN AREA ======= */
+.main-area{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;}
+
+/* TOPBAR (desktop) */
+.topbar{
+  height:var(--hw);background:var(--card);
+  border-bottom:1px solid var(--border);
+  padding:0 28px;display:flex;align-items:center;justify-content:space-between;
+  flex-shrink:0;box-shadow:var(--sh1);
+}
+.tb-left h1{font-family:var(--fn-h);font-size:17px;font-weight:700;color:var(--text);}
+.tb-left .tb-sub{font-size:12px;color:var(--text3);margin-top:1px;}
+.tb-right{display:flex;align-items:center;gap:8px;}
+.tb-btn{
+  height:34px;padding:0 14px;border-radius:var(--r8);
+  border:1px solid var(--border);background:var(--card);
+  font-family:var(--fn-b);font-size:13px;font-weight:600;color:var(--text2);
+  cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s;white-space:nowrap;
+}
+.tb-btn i{font-size:16px;}
+.tb-btn:hover{background:var(--bg);border-color:var(--teal3);color:var(--teal2);}
+.tb-btn.primary{background:var(--teal);border-color:var(--teal);color:#fff;}
+.tb-btn.primary:hover{background:var(--teal2);}
+.tb-btn.primary i{color:#fff;}
+
+/* MOBILE HEADER */
+.mob-hdr{
+  display:none;background:var(--night);
+  padding:12px 16px;flex-shrink:0;
+  justify-content:space-between;align-items:center;
+  box-shadow:var(--sh2);
+}
+.mob-hdr-title{font-family:var(--fn-h);font-size:16px;font-weight:700;color:#fff;}
+.mob-hdr-r{display:flex;gap:8px;}
+.mob-btn{
+  width:36px;height:36px;border-radius:var(--r8);border:none;
+  background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;
+  cursor:pointer;color:#fff;transition:background .2s;
+}
+.mob-btn:hover{background:rgba(255,255,255,.18);}
+.mob-btn i{font-size:17px;}
+
+/* MOBILE SYNC */
+.mob-sync{display:none;align-items:center;gap:7px;font-size:12px;color:var(--text3);padding:7px 16px;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0;}
+
+/* CONTENT SCROLL */
+.cs{flex:1;overflow-y:auto;padding:22px 28px;}
+
+/* BOTTOM NAV (mobile) */
+.bnav{
+  display:none;background:var(--night);
+  padding:8px 0;padding-bottom:calc(8px + env(safe-area-inset-bottom));
+  flex-shrink:0;border-top:1px solid rgba(255,255,255,.07);
+}
+.bnav-in{display:flex;justify-content:space-around;}
+.ni{
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+  cursor:pointer;padding:5px 12px;border-radius:var(--r8);
+  border:none;background:transparent;color:rgba(255,255,255,.35);transition:color .2s;
+}
+.ni.active{color:#fff;}
+.ni.active i{color:var(--teal) !important;}
+.ni i{font-size:20px;color:inherit;}
+.ni span{font-size:10px;font-weight:500;}
+
+/* FAB */
+.fab{
+  position:fixed;bottom:76px;right:18px;
+  width:50px;height:50px;background:var(--teal);border:none;border-radius:50%;
+  display:none;align-items:center;justify-content:center;
+  cursor:pointer;box-shadow:0 6px 20px rgba(0,180,160,.4);
+  transition:all .3s cubic-bezier(.34,1.56,.64,1);z-index:200;
+}
+.fab:hover{background:var(--teal2);transform:scale(1.1);}
+.fab i{color:#fff;font-size:22px;}
+
+/* ======= DASHBOARD ======= */
+.page-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;}
+.page-title{font-family:var(--fn-h);font-size:22px;font-weight:700;color:var(--text);}
+.page-sub{font-size:13px;color:var(--text3);margin-top:2px;}
+
+/* Stat cards */
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px;}
+.sc{
+  background:var(--card);border-radius:var(--r16);padding:18px 20px;
+  border:1px solid var(--border);box-shadow:var(--sh1);
+  cursor:pointer;transition:all .22s;
+  border-left:4px solid transparent;
+  position:relative;overflow:hidden;
+}
+.sc::after{
+  content:'';position:absolute;left:0;top:0;bottom:0;width:4px;
+  border-radius:var(--r4) 0 0 var(--r4);
+}
+.sc.c-crit{border-left-color:var(--crit);}
+.sc.c-high{border-left-color:var(--high);}
+.sc.c-warn{border-left-color:var(--amber);}
+.sc.c-ok{border-left-color:var(--low);}
+.sc:hover{transform:translateY(-2px);box-shadow:var(--sh2);}
+.sc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+.sc-icon{width:38px;height:38px;border-radius:var(--r8);display:flex;align-items:center;justify-content:center;}
+.sc-icon i{font-size:19px;}
+.sc.c-crit .sc-icon{background:var(--crit-l);}
+.sc.c-crit .sc-icon i{color:var(--crit-d);}
+.sc.c-high .sc-icon{background:var(--high-l);}
+.sc.c-high .sc-icon i{color:var(--high-d);}
+.sc.c-warn .sc-icon{background:var(--amber2);}
+.sc.c-warn .sc-icon i{color:#B45309;}
+.sc.c-ok .sc-icon{background:var(--low-l);}
+.sc.c-ok .sc-icon i{color:var(--low-d);}
+.sc-num{font-family:var(--fn-h);font-size:34px;font-weight:700;color:var(--text);line-height:1;}
+.sc-label{font-size:12.5px;color:var(--text2);font-weight:500;margin-top:4px;}
+.sc-sub{font-size:11px;color:var(--text3);margin-top:2px;}
+
+/* Dashboard panels */
+.dash-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:22px;}
+.dash-wide{grid-template-columns:1.5fr 1fr;}
+.panel{background:var(--card);border-radius:var(--r16);padding:20px 22px;border:1px solid var(--border);box-shadow:var(--sh1);}
+.ph{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+.ptitle{font-family:var(--fn-h);font-size:14px;font-weight:700;color:var(--text);}
+.pact{font-size:12px;color:var(--teal);cursor:pointer;font-weight:600;background:none;border:none;padding:4px 8px;border-radius:var(--r4);transition:background .2s;}
+.pact:hover{background:var(--teal4);}
+
+/* Priority distribution */
+.dist-bar{height:10px;border-radius:var(--rfull);background:var(--bg);overflow:hidden;display:flex;margin-bottom:14px;}
+.db-seg{height:100%;transition:width .9s cubic-bezier(.34,1.56,.64,1);}
+.db-seg.kritis{background:var(--crit);}
+.db-seg.tinggi{background:var(--high);}
+.db-seg.menengah{background:var(--med);}
+.db-seg.rendah{background:var(--low);}
+.dist-legend{display:flex;flex-direction:column;gap:9px;}
+.dl-row{display:flex;align-items:center;gap:9px;}
+.dl-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.dl-name{font-size:13px;color:var(--text2);flex:1;font-weight:500;}
+.dl-n{font-size:13px;font-weight:700;color:var(--text);width:24px;text-align:center;}
+.dl-bar{flex:2;height:4px;background:var(--bg);border-radius:2px;overflow:hidden;}
+.dl-bar-fill{height:100%;border-radius:2px;transition:width .9s cubic-bezier(.34,1.56,.64,1);}
+.dl-pct{font-size:11px;color:var(--text3);width:32px;text-align:right;}
+
+/* Completion gauge */
+.gauge-wrap{display:flex;align-items:center;gap:20px;padding:4px 0;}
+.gauge-svg{width:96px;height:96px;flex-shrink:0;}
+.gauge-info{flex:1;}
+.gauge-pct{font-family:var(--fn-h);font-size:30px;font-weight:700;color:var(--text);line-height:1;}
+.gauge-lbl{font-size:12px;color:var(--text3);margin-top:4px;}
+.gauge-stats{margin-top:14px;display:flex;flex-direction:column;gap:7px;}
+.gs-row{display:flex;align-items:center;justify-content:space-between;font-size:12.5px;}
+.gs-row .gs-k{color:var(--text2);}
+.gs-row .gs-v{font-weight:700;color:var(--text);}
+
+/* Activity mini chart */
+.act-bars{display:flex;align-items:flex-end;gap:5px;height:56px;margin-top:8px;}
+.act-b-wrap{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;}
+.act-b-inner{flex:1;width:100%;display:flex;align-items:flex-end;background:var(--teal4);border-radius:3px 3px 0 0;}
+.act-b-fill{width:100%;background:linear-gradient(to top,var(--teal2),var(--teal));border-radius:3px 3px 0 0;transition:height .9s cubic-bezier(.34,1.56,.64,1);}
+.act-b-lbl{font-size:9px;color:var(--text4);}
+
+/* Recent tasks */
+.task-row{
+  display:flex;align-items:center;gap:12px;
+  padding:11px 0;border-bottom:1px solid var(--border2);
+  cursor:pointer;transition:background .15s;border-radius:var(--r8);
+}
+.task-row:last-child{border-bottom:none;}
+.task-row:hover{background:var(--bg);margin:0 -8px;padding:11px 8px;}
+.tr-prio{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.tr-info{flex:1;min-width:0;}
+.tr-t{font-size:13.5px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tr-m{font-size:11.5px;color:var(--text3);margin-top:2px;}
+.tr-st{font-size:11px;font-weight:600;padding:3px 9px;border-radius:var(--rfull);}
+
+/* ======= TASK PAGE ======= */
+.toolbar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;}
+.srch{
+  flex:1;min-width:180px;display:flex;align-items:center;gap:8px;
+  background:var(--card);border-radius:var(--r8);padding:8px 13px;
+  border:1px solid var(--border);transition:border-color .2s;
+}
+.srch:focus-within{border-color:var(--teal);box-shadow:0 0 0 3px rgba(0,180,160,.1);}
+.srch i{font-size:16px;color:var(--text3);}
+.srch input{border:none;outline:none;font-family:var(--fn-b);font-size:13.5px;color:var(--text);background:transparent;width:100%;}
+.srch input::placeholder{color:var(--text4);}
+.vt-btns{display:flex;border:1px solid var(--border);border-radius:var(--r8);overflow:hidden;background:var(--card);}
+.vt{
+  padding:7px 12px;border:none;background:transparent;
+  cursor:pointer;color:var(--text3);display:flex;align-items:center;gap:5px;
+  font-family:var(--fn-b);font-size:12px;font-weight:600;transition:all .2s;
+}
+.vt:hover{background:var(--bg);}
+.vt.active{background:var(--teal);color:#fff;}
+.vt i{font-size:15px;}
+.ftabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;}
+.ft{
+  padding:5px 13px;border-radius:var(--rfull);
+  border:1px solid var(--border);background:var(--card);
+  font-size:12px;font-weight:600;color:var(--text2);
+  cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .2s;
+}
+.ft:hover{border-color:var(--teal3);color:var(--teal2);}
+.ft.active{background:var(--teal);border-color:var(--teal);color:#fff;}
+.ft .ftd{width:6px;height:6px;border-radius:50%;}
+
+/* Task card (list) */
+@keyframes tcin{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+.tc{
+  background:var(--card);border-radius:var(--r12);padding:15px 17px;
+  margin-bottom:10px;border:1px solid var(--border);border-left:3px solid transparent;
+  box-shadow:var(--sh1);transition:all .2s;animation:tcin .25s ease both;
+}
+.tc:hover{box-shadow:var(--sh2);transform:translateY(-1px);}
+.tc.p-kritis{border-left-color:var(--crit);}
+.tc.p-tinggi{border-left-color:var(--high);}
+.tc.p-menengah{border-left-color:var(--med);}
+.tc.p-rendah{border-left-color:var(--low);}
+.tc-top{display:flex;align-items:flex-start;gap:12px;margin-bottom:9px;}
+.tc-body{flex:1;min-width:0;}
+.tc-title{font-size:14px;font-weight:600;color:var(--text);line-height:1.4;margin-bottom:5px;}
+.tc-meta{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.tc-loc{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--teal2);font-weight:500;}
+.tc-loc i{font-size:13px;}
+.tc-time{font-size:12px;color:var(--text4);}
+.tc-desc{font-size:13px;color:var(--text3);line-height:1.5;margin-bottom:11px;}
+.tc-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;}
+.tc-acts{display:flex;gap:7px;padding-top:10px;margin-top:9px;border-top:1px solid var(--border2);}
+
+/* ======= KANBAN ======= */
+.kboard{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+.kcol{
+  background:var(--bg);border-radius:var(--r16);padding:13px;
+  display:flex;flex-direction:column;
+  min-height:240px;max-height:calc(100vh - 200px);
+  border:1px solid var(--border);
+  transition:background .2s;
+}
+.kcol.drag-over{background:var(--teal4);border-color:var(--teal3);}
+.kch{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;flex-shrink:0;}
+.kct{font-size:12px;font-weight:700;color:var(--text2);display:flex;align-items:center;gap:7px;}
+.kct .kcd{width:8px;height:8px;border-radius:50%;}
+.kcc{background:var(--card);border-radius:var(--rfull);padding:2px 8px;font-size:11px;font-weight:600;color:var(--text2);box-shadow:var(--sh1);}
+.kscroll{overflow-y:auto;flex:1;padding-bottom:4px;}
+.kscroll::-webkit-scrollbar{width:3px;}
+.kcard{
+  background:var(--card);border-radius:var(--r12);padding:12px 13px;
+  margin-bottom:7px;border:1px solid var(--border);
+  border-left:3px solid transparent;cursor:grab;
+  box-shadow:var(--sh1);transition:all .2s;
+  animation:tcin .25s ease both;
+}
+.kcard:active{cursor:grabbing;}
+.kcard:hover{box-shadow:var(--sh2);transform:translateY(-1px);}
+.kcard.dragging{opacity:.5;transform:scale(.97);}
+.kcard.p-kritis{border-left-color:var(--crit);}
+.kcard.p-tinggi{border-left-color:var(--high);}
+.kcard.p-menengah{border-left-color:var(--med);}
+.kcard.p-rendah{border-left-color:var(--low);}
+.kcard-t{font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px;line-height:1.4;}
+.kcard-m{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:7px;}
+.kcard-foot{display:flex;justify-content:flex-end;gap:6px;padding-top:7px;border-top:1px solid var(--border2);}
+.kempty{display:flex;flex-direction:column;align-items:center;padding:24px 10px;font-size:12px;color:var(--text4);}
+.kempty i{font-size:28px;margin-bottom:8px;color:var(--text4);}
+
+/* ======= BADGES ======= */
+.pb{display:inline-flex;align-items:center;gap:4px;border-radius:var(--rfull);padding:3px 9px;font-size:11px;font-weight:600;}
+.pb .pd{width:5px;height:5px;border-radius:50%;}
+.pb.kritis{background:var(--crit-l);color:var(--crit-d);border:1px solid var(--crit-m);}
+.pb.kritis .pd{background:var(--crit);}
+.pb.kritis{animation:cpulse 2s ease-in-out infinite;}
+@keyframes cpulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0);}50%{box-shadow:0 0 0 3px rgba(239,68,68,.18);}}
+.pb.tinggi{background:var(--high-l);color:var(--high-d);border:1px solid var(--high-m);}
+.pb.tinggi .pd{background:var(--high);}
+.pb.menengah{background:var(--med-l);color:var(--med-d);border:1px solid var(--med-m);}
+.pb.menengah .pd{background:var(--med);}
+.pb.rendah{background:var(--low-l);color:var(--low-d);border:1px solid var(--low-m);}
+.pb.rendah .pd{background:var(--low);}
+.sb{display:inline-flex;align-items:center;gap:5px;border-radius:var(--rfull);padding:3px 10px;font-size:11px;font-weight:600;}
+.sb i{font-size:12px;}
+.sb.belum{background:#F3F4F6;color:#6B7280;border:1px solid #E5E7EB;}
+.sb.proses{background:#EFF6FF;color:#2563EB;border:1px solid #BFDBFE;}
+.sb.selesai{background:var(--low-l);color:var(--low-d);border:1px solid var(--low-m);}
+
+/* ======= BUTTONS ======= */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:none;border-radius:var(--r8);font-family:var(--fn-b);font-size:13px;font-weight:600;cursor:pointer;transition:all .18s;padding:8px 15px;white-space:nowrap;}
+.btn i{font-size:14px;}
+.btn-p{background:var(--teal);color:#fff;}
+.btn-p:hover{background:var(--teal2);transform:translateY(-1px);}
+.btn-s{background:var(--low-d);color:#fff;}
+.btn-s:hover{background:#15803D;}
+.btn-w{background:var(--med-l);color:var(--med-d);border:1px solid var(--med-m);}
+.btn-d{background:var(--crit-l);color:var(--crit-d);border:1px solid var(--crit-m);}
+.btn-g{background:transparent;color:var(--text2);border:1px solid var(--border);}
+.btn-g:hover{background:var(--bg);}
+.btn-full{width:100%;padding:12px 20px;border-radius:var(--r12);font-size:14px;}
+.btn-sm{padding:5px 11px;font-size:12px;}
+
+/* ======= EMPTY STATE ======= */
+.empty{text-align:center;padding:48px 20px;}
+.empty-ico{width:60px;height:60px;background:var(--teal4);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 14px;}
+.empty-ico i{font-size:26px;color:var(--teal);}
+.empty h3{font-family:var(--fn-h);font-size:17px;font-weight:600;color:var(--text2);margin-bottom:6px;}
+.empty p{font-size:13px;color:var(--text3);}
+
+/* ======= HISTORY ======= */
+.hcard{background:var(--card);border-radius:var(--r12);padding:14px 16px;margin-bottom:10px;border:1px solid var(--border);box-shadow:var(--sh1);opacity:.85;}
+.hmeta{display:flex;gap:14px;margin-top:9px;font-size:12px;color:var(--text3);}
+
+/* ======= SETTINGS ======= */
+.scard{background:var(--card);border-radius:var(--r16);padding:20px 22px;margin-bottom:16px;border:1px solid var(--border);box-shadow:var(--sh1);}
+.scard h3{font-family:var(--fn-h);font-size:14px;font-weight:700;color:var(--text);margin-bottom:14px;padding-bottom:11px;border-bottom:1px solid var(--border2);}
+.step-row{display:flex;gap:10px;margin-bottom:9px;}
+.sn{background:var(--teal);color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;margin-top:2px;}
+.step-row span{font-size:13px;color:var(--text2);line-height:1.5;}
+.codeblock{background:#0A1929;border-radius:var(--r8);padding:14px;overflow:auto;font-family:'Courier New',monospace;font-size:11px;color:#7FDBCA;line-height:1.6;white-space:pre;max-height:220px;}
+.codeblock::-webkit-scrollbar{width:3px;height:3px;}
+.codeblock::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);}
+
+/* ======= FORM / MODAL ======= */
+.fg{margin-bottom:14px;}
+.flbl{display:block;font-size:11.5px;font-weight:600;color:var(--text2);letter-spacing:.4px;text-transform:uppercase;margin-bottom:6px;}
+.finput,.ftarea{width:100%;background:var(--bg);border:1.5px solid var(--border);border-radius:var(--r8);padding:10px 13px;font-family:var(--fn-b);font-size:14px;color:var(--text);outline:none;transition:border-color .2s,box-shadow .2s;}
+.finput:focus,.ftarea:focus{border-color:var(--teal);background:var(--card);box-shadow:0 0 0 3px rgba(0,180,160,.12);}
+.ftarea{resize:none;height:78px;}
+#photo-drop:hover{border-color:var(--teal);background:var(--teal4);}
+#photo-drop.drag-over{border-color:var(--teal);background:var(--teal4);transform:scale(1.01);}
+.psel{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;}
+.popt{background:var(--bg);border:1.5px solid var(--border);border-radius:var(--r8);padding:10px 12px;cursor:pointer;transition:all .18s;display:flex;align-items:center;gap:8px;font-family:var(--fn-b);font-size:13px;font-weight:500;color:var(--text2);}
+.popt .od{width:9px;height:9px;border-radius:50%;}
+.popt[data-v="kritis"] .od{background:var(--crit);}
+.popt[data-v="tinggi"] .od{background:var(--high);}
+.popt[data-v="menengah"] .od{background:var(--med);}
+.popt[data-v="rendah"] .od{background:var(--low);}
+.popt.sel[data-v="kritis"]{border-color:var(--crit);background:var(--crit-l);color:var(--crit-d);}
+.popt.sel[data-v="tinggi"]{border-color:var(--high);background:var(--high-l);color:var(--high-d);}
+.popt.sel[data-v="menengah"]{border-color:var(--med);background:var(--med-l);color:var(--med-d);}
+.popt.sel[data-v="rendah"]{border-color:var(--low);background:var(--low-l);color:var(--low-d);}
+
+/* Modal */
+.mov{position:fixed;inset:0;background:rgba(13,30,45,.55);backdrop-filter:blur(4px);z-index:500;display:flex;align-items:flex-end;justify-content:center;opacity:0;pointer-events:none;transition:opacity .28s;}
+.mov.open{opacity:1;pointer-events:all;}
+.msh{background:var(--card);border-radius:var(--r24) var(--r24) 0 0;width:100%;max-width:560px;max-height:92vh;overflow-y:auto;padding:24px;padding-bottom:calc(24px + env(safe-area-inset-bottom));transform:translateY(100%);transition:transform .32s cubic-bezier(.32,.72,0,1);}
+.mov.open .msh{transform:translateY(0);}
+.mhandle{width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 18px;}
+.mtitle{font-family:var(--fn-h);font-size:19px;font-weight:700;color:var(--text);margin-bottom:18px;}
+
+/* Confirm */
+.cov{position:fixed;inset:0;background:rgba(13,30,45,.6);backdrop-filter:blur(6px);z-index:600;display:flex;align-items:center;justify-content:center;padding:20px;opacity:0;pointer-events:none;transition:opacity .2s;}
+.cov.open{opacity:1;pointer-events:all;}
+.cbox{background:var(--card);border-radius:var(--r20);padding:22px;width:100%;max-width:340px;transform:scale(.92);transition:transform .22s cubic-bezier(.34,1.56,.64,1);}
+.cov.open .cbox{transform:scale(1);}
+.cico{width:46px;height:46px;border-radius:var(--r12);display:flex;align-items:center;justify-content:center;margin-bottom:13px;}
+.cico.warn{background:var(--high-l);}.cico.warn i{color:var(--high-d);}
+.cico.succ{background:var(--low-l);}.cico.succ i{color:var(--low-d);}
+.cico.dang{background:var(--crit-l);}.cico.dang i{color:var(--crit-d);}
+.cico i{font-size:22px;}
+.cbox h3{font-family:var(--fn-h);font-size:17px;font-weight:700;color:var(--text);margin-bottom:7px;}
+.cbox p{font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:18px;}
+.cacts{display:flex;gap:9px;}
+
+/* Toast */
+.toast{position:fixed;top:18px;left:50%;transform:translateX(-50%) translateY(-140%);background:var(--text);color:#fff;padding:10px 18px;border-radius:var(--rfull);font-size:13px;font-weight:500;z-index:999;transition:transform .3s cubic-bezier(.32,.72,0,1);box-shadow:var(--sh3);pointer-events:none;display:flex;align-items:center;gap:8px;white-space:nowrap;}
+.toast.succ{background:#16A34A;}
+.toast.err{background:var(--crit-d);}
+.toast.show{transform:translateX(-50%) translateY(0);}
+
+/* LOGIN */
+.login-screen{height:100%;width:100%;background:linear-gradient(145deg,#071624 0%,#0D1E2D 45%,#0F2D3E 100%);display:flex;align-items:center;justify-content:center;overflow-y:auto;padding:30px 20px;position:relative;overflow:hidden;}
+.login-screen::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 20% 25%,rgba(0,180,160,.18) 0%,transparent 50%),radial-gradient(ellipse at 80% 75%,rgba(245,158,11,.12) 0%,transparent 50%);animation:amb 10s ease-in-out infinite alternate;pointer-events:none;}
+@keyframes amb{0%{transform:translate(0,0);}100%{transform:translate(20px,-15px);}}
+.login-inner{position:relative;z-index:1;width:100%;max-width:380px;}
+.login-logo{text-align:center;margin-bottom:44px;}
+.login-ring{width:88px;height:88px;background:rgba(0,180,160,.12);border:1px solid rgba(0,180,160,.22);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 18px;backdrop-filter:blur(10px);overflow:hidden;}
+.login-ring i{font-size:38px;color:var(--teal);}
+.login-ring img{width:100%;height:100%;object-fit:cover;}
+.login-title{font-family:var(--fn-h);font-size:30px;font-weight:800;color:#fff;letter-spacing:-.3px;}
+.login-sub{font-size:11px;color:rgba(255,255,255,.4);margin-top:6px;letter-spacing:2px;text-transform:uppercase;}
+.login-cards{display:flex;flex-direction:column;gap:13px;}
+.role-card{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:var(--r20);padding:20px;display:flex;align-items:center;gap:15px;cursor:pointer;transition:all .22s;backdrop-filter:blur(10px);}
+.role-card:hover{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.25);transform:translateY(-2px);}
+.ri{width:52px;height:52px;border-radius:var(--r12);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.role-card.admin .ri{background:rgba(245,158,11,.18);border:1px solid rgba(245,158,11,.28);}
+.role-card.helper .ri{background:rgba(0,180,160,.18);border:1px solid rgba(0,180,160,.28);}
+.ri i{font-size:24px;}
+.role-card.admin .ri i{color:#FCD34D;}
+.role-card.helper .ri i{color:var(--teal);}
+.rc-name{font-size:15px;font-weight:700;color:#fff;}
+.rc-desc{font-size:12px;color:rgba(255,255,255,.45);margin-top:2px;}
+.rc-arr{margin-left:auto;color:rgba(255,255,255,.25);}
+.rc-arr i{font-size:18px;}
+.login-date{color:rgba(255,255,255,.25);font-size:11px;text-align:center;margin-top:26px;}
+
+/* HELPER MODE */
+.helper-hero{background:linear-gradient(135deg,var(--night),var(--night2));padding:20px 18px;position:relative;overflow:hidden;flex-shrink:0;}
+.hh-num{font-family:var(--fn-h);font-size:80px;font-weight:800;line-height:1;color:rgba(255,255,255,.06);position:absolute;top:8px;right:14px;pointer-events:none;}
+.hh-tag{font-size:10px;color:rgba(255,255,255,.4);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px;}
+.hh-title{font-family:var(--fn-h);font-size:21px;font-weight:700;color:#fff;line-height:1.3;margin-bottom:8px;}
+.hh-loc{display:flex;align-items:center;gap:5px;font-size:13px;color:rgba(255,255,255,.55);margin-bottom:14px;}
+.hh-loc i{font-size:14px;}
+.hh-acts{display:flex;gap:10px;}
+.hbtn{flex:1;padding:10px 14px;border-radius:var(--r8);font-family:var(--fn-b);font-size:13px;font-weight:600;cursor:pointer;border:none;display:flex;align-items:center;justify-content:center;gap:7px;transition:all .2s;}
+.hbtn i{font-size:14px;}
+.hbtn.start{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;}
+.hbtn.start:hover{background:rgba(255,255,255,.2);}
+.hbtn.done{background:var(--low-d);color:#fff;}
+.hbtn.done:hover{background:#15803D;}
+.mini-stats{display:flex;gap:10px;margin-bottom:18px;}
+.ms{flex:1;background:var(--card);border-radius:var(--r12);padding:11px 13px;box-shadow:var(--sh1);border:1px solid var(--border);}
+.ms-n{font-family:var(--fn-h);font-size:22px;font-weight:700;color:var(--text);line-height:1;}
+.ms-l{font-size:11px;color:var(--text3);margin-top:2px;}
+
+/* RESPONSIVE */
+@media(max-width:1100px){.stat-grid{grid-template-columns:repeat(2,1fr);}}
+@media(max-width:900px){.dash-grid,.dash-wide{grid-template-columns:1fr;}.kboard{grid-template-columns:1fr;}.kcol{max-height:300px;}}
+@media(max-width:768px){
+  .sidebar{display:none!important;}
+  .mob-hdr{display:flex!important;}
+  .mob-sync{display:flex!important;}
+  .bnav{display:block!important;}
+  .topbar{display:none!important;}
+  .cs{padding:14px 15px;}
+  .stat-grid{grid-template-columns:repeat(2,1fr);gap:10px;}
+  .fab{display:flex!important;}
+  .dash-grid,.dash-wide{grid-template-columns:1fr;}
+}
+@media(max-width:480px){.stat-grid{grid-template-columns:repeat(2,1fr);}.sc-num{font-size:26px;}.toolbar{gap:6px;}}
+@media(min-width:769px){
+  .mov{align-items:center;}
+  .msh{border-radius:var(--r24);margin:20px;max-width:500px;}
+  .mhandle{display:none;}
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="mov" class="mov"><div class="msh"><div class="mhandle"></div><div id="mc"></div></div></div>
+<div id="cov" class="cov"><div id="cbox" class="cbox"></div></div>
+<div id="toast" class="toast"></div>
+<script>
+/* ============================================================
+   STATE
+   ============================================================ */
+const S={role:null,view:'login',tv:'list',tasks:[],filter:'all',search:'',sy:'off',settings:{url:'',villa:'Villa Asri',fcmApiKey:'',fcmProjectId:'',fcmAppId:'',fcmVapidKey:'',fcmAuthDomain:'',fcmBucket:'',fcmSenderId:'',waPhone:'',waApiKey:''}};
+const PO={kritis:0,tinggi:1,menengah:2,rendah:3};
+const PL={kritis:'Kritis',tinggi:'Tinggi',menengah:'Menengah',rendah:'Rendah'};
+const SL={belum:'Belum Dimulai',proses:'Sedang Dikerjakan',selesai:'Selesai'};
+const PCOLOR={kritis:'var(--crit)',tinggi:'var(--high)',menengah:'var(--med)',rendah:'var(--low)'};
+
+/* ============================================================
+   STORAGE
+   ============================================================ */
+function ls(){try{const t=localStorage.getItem('vt');if(t)S.tasks=JSON.parse(t);const s=localStorage.getItem('vs');if(s)S.settings={...S.settings,...JSON.parse(s)};}catch(e){}}
+function ss(){try{localStorage.setItem('vt',JSON.stringify(S.tasks));localStorage.setItem('vs',JSON.stringify(S.settings));}catch(e){}}
+
+/* ============================================================
+   GOOGLE SHEETS SYNC
+   ============================================================ */
+async function gsync(act,data){
+  if(!S.settings.url)return null;
+  S.sy='sync';updSy();
+  try{
+    let r;
+    if(act==='read'||act==='getHistory'){
+      const actionParam = act==='getHistory' ? 'getHistory' : 'getTasks';
+      r=await fetch(S.settings.url+'?action='+actionParam,{redirect:'follow'});
+    } else {
+      r=await fetch(S.settings.url,{method:'POST',body:JSON.stringify({action:act,...data}),redirect:'follow'});
+    }
+    const j=await r.json();
+    S.sy='on';updSy();
+    return j;
+  }catch(e){S.sy='off';updSy();return null;}
+}
+async function loadGs(){
+  const [activeR, historyR] = await Promise.all([
+    gsync('read',{}),
+    gsync('getHistory',{})
+  ]);
+  if(activeR && activeR.tasks && historyR && historyR.tasks){
+    S.tasks = [...activeR.tasks, ...historyR.tasks];
+    ss();
+  } else if(activeR && activeR.tasks){
+    S.tasks = activeR.tasks;
+    ss();
+  }
+}
+function updSy(){const el=document.getElementById('sync-dot');const el2=document.getElementById('sync-lbl');if(!el)return;el.className='sd '+S.sy;if(el2)el2.textContent=S.sy==='on'?'Tersinkron':S.sy==='sync'?'Menyinkron...':'Offline';}
+
+/* ============================================================
+   TASK HELPERS
+   ============================================================ */
+function activeTasks(){
+  let t=S.tasks.filter(x=>x.status!=='selesai');
+  t.sort((a,b)=>PO[a.priority]-PO[b.priority]);
+  if(S.filter!=='all'){
+    if(['kritis','tinggi','menengah','rendah'].includes(S.filter))t=t.filter(x=>x.priority===S.filter);
+    else t=t.filter(x=>x.status===S.filter);
+  }
+  if(S.search){const q=S.search.toLowerCase();t=t.filter(x=>x.title.toLowerCase().includes(q)||(x.location||'').toLowerCase().includes(q)||(x.description||'').toLowerCase().includes(q));}
+  return t;
+}
+function tasksByStatus(st){return S.tasks.filter(x=>x.status===st).sort((a,b)=>PO[a.priority]-PO[b.priority]);}
+function doneTasks(){return S.tasks.filter(x=>x.status==='selesai').sort((a,b)=>new Date(b.completedAt||0)-new Date(a.completedAt||0));}
+function stats(){
+  const a=S.tasks.filter(x=>x.status!=='selesai');
+  const today=new Date().toDateString();
+  return{
+    crit:a.filter(x=>x.priority==='kritis').length,
+    prog:a.filter(x=>x.status==='proses').length,
+    total:a.length,
+    done:S.tasks.filter(x=>x.status==='selesai').length,
+    doneToday:S.tasks.filter(x=>x.status==='selesai'&&x.completedAt&&new Date(x.completedAt).toDateString()===today).length,
+    kritis:a.filter(x=>x.priority==='kritis').length,
+    tinggi:a.filter(x=>x.priority==='tinggi').length,
+    menengah:a.filter(x=>x.priority==='menengah').length,
+    rendah:a.filter(x=>x.priority==='rendah').length
+  };
+}
+function ftime(iso){if(!iso)return'';const d=new Date(iso),diff=(Date.now()-d)/60000;if(diff<1)return'Baru saja';if(diff<60)return`${Math.floor(diff)} mnt lalu`;if(diff<1440)return`${Math.floor(diff/60)} jam lalu`;return d.toLocaleDateString('id-ID',{day:'numeric',month:'short'});}
+function mkTask(data){const t={id:'t'+Date.now()+'_'+Math.random().toString(36).substr(2,4),title:data.title,description:data.description||'',location:data.location||'',priority:data.priority||'menengah',status:data.status||'belum',assignedTo:data.assignedTo||'',photos:[],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),completedAt:null};S.tasks.unshift(t);ss();gsync('createTask',{task:t});return t;}
+function upSt(id,st){const t=S.tasks.find(x=>x.id===id);if(!t)return;t.status=st;t.updatedAt=new Date().toISOString();if(st==='selesai')t.completedAt=new Date().toISOString();ss();gsync('updateTask',{id,status:st});if(st==='selesai')gsync('updateTaskFull',{task:t});}
+function delTask(id){S.tasks=S.tasks.filter(x=>x.id!==id);ss();gsync('deleteTask',{id});}
+
+/* ============================================================
+   TOAST / MODAL / CONFIRM
+   ============================================================ */
+function toast(msg,type=''){const el=document.getElementById('toast');el.innerHTML=msg;el.className=`toast ${type} show`;setTimeout(()=>{el.className=`toast ${type}`;},2800);}
+function openM(html){document.getElementById('mc').innerHTML=html;document.getElementById('mov').classList.add('open');}
+function closeM(){document.getElementById('mov').classList.remove('open');}
+function openC({ico='warn',title,msg,ok='OK',okCls='btn-p',onOk}){
+  const icons={warn:'ti-alert-triangle',succ:'ti-circle-check',dang:'ti-trash'};
+  document.getElementById('cbox').innerHTML=`<div class="cico ${ico}"><i class="ti ${icons[ico]||icons.warn}"></i></div><h3>${title}</h3><p>${msg}</p><div class="cacts"><button class="btn btn-g" style="flex:1" onclick="closeC()">Batal</button><button class="btn ${okCls}" style="flex:1" onclick="doC()">${ok}</button></div>`;
+  document.getElementById('cov')._ok=onOk;document.getElementById('cov').classList.add('open');
+}
+function closeC(){document.getElementById('cov').classList.remove('open');}
+function doC(){const el=document.getElementById('cov');if(el._ok)el._ok();closeC();}
+
+/* ============================================================
+   BADGE HELPERS
+   ============================================================ */
+function pb(p){return`<span class="pb ${p}"><span class="pd"></span>${PL[p]||p}</span>`;}
+function sbg(s){const ic={belum:'ti-circle',proses:'ti-loader',selesai:'ti-circle-check'};return`<span class="sb ${s}"><i class="ti ${ic[s]}"></i>${SL[s]}</span>`;}
+
+/* ============================================================
+   TASK CARD (list view)
+   ============================================================ */
+function tc(t,isH){
+  const cs=t.status==='belum',ip=t.status==='proses';
+  const hasPhotos=t.photos&&t.photos.length>0;
+  return`<div class="tc p-${t.priority}" data-id="${t.id}">
+  <div class="tc-top"><div class="tc-body">
+    ${pb(t.priority)}<div class="tc-title" style="margin-top:7px">${t.title}</div>
+    <div class="tc-meta" style="margin-top:4px">
+      ${t.location?`<span class="tc-loc"><i class="ti ti-map-pin"></i>${t.location}</span>`:''}
+      ${t.assignedTo?`<span class="tc-loc"><i class="ti ti-user"></i>${t.assignedTo}</span>`:''}
+      <span class="tc-time">${ftime(t.createdAt)}</span>
+    </div>
+  </div></div>
+  ${t.description?`<p class="tc-desc">${t.description}</p>`:''}
+  ${hasPhotos?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+    ${t.photos.map(p=>`<div style="position:relative;width:60px;height:60px;border-radius:var(--r8);overflow:hidden;border:1px solid var(--border)">
+      <img src="${p.url}" style="width:100%;height:100%;object-fit:cover" onclick="openPhoto('${p.url}')">
+    </div>`).join('')}
+  </div>`:''}
+  ${t.completionNote?`<p class="tc-desc" style="font-size:12px;color:var(--text2);background:var(--low-l);padding:8px 10px;border-radius:var(--r8);border:1px solid var(--low-m);margin-top:8px"><i class="ti ti-message-2" style="color:var(--low-d);margin-right:6px"></i>${t.completionNote}</p>`:''}
+  <div class="tc-foot">${sbg(t.status)}</div>
+  <div class="tc-acts">
+    ${isH?(cs?`<button class="btn btn-p" style="flex:1" onclick="hStart('${t.id}')"><i class="ti ti-player-play"></i>Mulai Kerjakan</button>`:ip?`<button class="btn btn-s" style="flex:1" onclick="hDone('${t.id}')"><i class="ti ti-check"></i>Tandai Selesai</button>`:'')
+    :`${cs?`<button class="btn btn-w btn-sm" onclick="aStart('${t.id}')"><i class="ti ti-player-play"></i>Mulai</button>`:''}
+    ${ip?`<button class="btn btn-s btn-sm" onclick="aDone('${t.id}')"><i class="ti ti-check"></i>Selesai</button>`:''}
+    <button class="btn btn-g btn-sm" onclick="openEdit('${t.id}')"><i class="ti ti-pencil"></i>Edit</button>
+    <button class="btn btn-d btn-sm" onclick="cDel('${t.id}')"><i class="ti ti-trash"></i></button>`}
+  </div>
+</div>`;}
+
+/* ============================================================
+   KANBAN CARD
+   ============================================================ */
+function kc(t){
+  const cs=t.status==='belum',ip=t.status==='proses';
+  return`<div class="kcard p-${t.priority}" data-id="${t.id}" draggable="true" ondragstart="kDragStart(event,'${t.id}')" onclick="kClick('${t.id}')">
+  <div class="kcard-t">${t.title}</div>
+  <div class="kcard-m">${pb(t.priority)}${t.location?`<span style="font-size:11px;color:var(--text3)"><i class="ti ti-map-pin" style="font-size:11px"></i> ${t.location}</span>`:''}${t.assignedTo?`<span style="font-size:11px;color:var(--text3)"><i class="ti ti-user" style="font-size:11px"></i> ${t.assignedTo}</span>`:''}</div>
+  <div class="kcard-foot">
+    ${cs?`<button class="btn btn-w btn-sm" onclick="event.stopPropagation();aStart('${t.id}');render()"><i class="ti ti-player-play"></i>Mulai</button>`:''}
+    ${ip?`<button class="btn btn-s btn-sm" onclick="event.stopPropagation();aDone('${t.id}');render()"><i class="ti ti-check"></i>Selesai</button>`:''}
+    <button class="btn btn-d btn-sm" onclick="event.stopPropagation();cDel('${t.id}')"><i class="ti ti-trash"></i></button>
+  </div>
+</div>`;}
+
+/* ============================================================
+   DRAG & DROP (kanban)
+   ============================================================ */
+let dragId=null;
+function kDragStart(e,id){dragId=id;e.dataTransfer.effectAllowed='move';setTimeout(()=>{const el=document.querySelector(`[data-id="${id}"]`);if(el)el.classList.add('dragging');},0);}
+function kDragOver(e,col){e.preventDefault();document.querySelectorAll('.kcol').forEach(c=>c.classList.remove('drag-over'));const el=document.querySelector(`.kcol[data-col="${col}"]`);if(el)el.classList.add('drag-over');}
+function kDragLeave(){document.querySelectorAll('.kcol').forEach(c=>c.classList.remove('drag-over'));}
+function kDrop(e,newSt){e.preventDefault();kDragLeave();if(!dragId)return;const map={'belum':'belum','proses':'proses','selesai':'selesai'};if(map[newSt])upSt(dragId,map[newSt]);dragId=null;render();}
+function kClick(id){openEdit(id);}
+
+/* ============================================================
+   SHARED LAYOUT PARTS
+   ============================================================ */
+function sidebar(view){
+  const st=stats();
+  return`<nav class="sidebar">
+  <div class="sb-logo" onclick="goLogin()">
+    <div class="sb-logo-icon"><img src="images/IMG_0146 (2).PNG" alt="Logo"></div>
+    <div class="sb-logo-text"><h2>${S.settings.villa}</h2><span>Villa Task Manager</span></div>
+  </div>
+  <div class="sb-nav">
+    <div class="sb-sec">
+      <div class="sb-sec-lbl">Utama</div>
+      ${sbItem('ti-layout-dashboard','Dashboard','dashboard',view)}
+      ${sbItemBadge('ti-clipboard-list','Tugas','tasks',view,st.total>0?st.total:0,st.crit>0?'crit':'')}
+      ${sbItem('ti-history','Riwayat','history',view)}
+    </div>
+    <div class="sb-sec">
+      <div class="sb-sec-lbl">Sistem</div>
+      ${sbItem('ti-settings','Pengaturan','settings',view)}
+    </div>
+  </div>
+  <div class="sb-bottom">
+    <div class="sb-sync"><span class="sd ${S.sy}" id="sync-dot"></span><span id="sync-lbl">${S.sy==='on'?'Tersinkron':S.sy==='sync'?'Menyinkron...':'Offline'}</span></div>
+    <div class="sb-user">
+      <div class="sb-av admin">A</div>
+      <div><div class="sb-uname">Admin</div><div class="sb-urole">Manajer Villa</div></div>
+      <button class="sb-logout" onclick="goLogin()" title="Keluar"><i class="ti ti-logout"></i></button>
+    </div>
+  </div>
+</nav>`;}
+
+function sbItem(ic,lbl,v,cur){return`<button class="sb-item${cur===v?' active':''}" onclick="setV('${v}')"><i class="ti ${ic}"></i>${lbl}</button>`;}
+function sbItemBadge(ic,lbl,v,cur,n,cls){return`<button class="sb-item${cur===v?' active':''}" onclick="setV('${v}')"><i class="ti ${ic}"></i>${lbl}${n>0?`<span class="sb-badge" style="${cls==='crit'?'':'background:var(--teal)'}">${n}</span>`:''}</button>`;}
+
+function topbar(title,sub,...actions){
+  return`<div class="topbar">
+  <div class="tb-left"><h1>${title}</h1>${sub?`<div class="tb-sub">${sub}</div>`:''}  </div>
+  <div class="tb-right">${actions.join('')}</div>
+</div>`;}
+
+function mobhdr(title,...actions){
+  return`<div class="mob-hdr">
+  <span class="mob-hdr-title">${title}</span>
+  <div class="mob-hdr-r">${actions.join('')}<button class="mob-btn" onclick="goLogin()"><i class="ti ti-logout"></i></button></div>
+</div>
+<div id="mob-sync" class="mob-sync"><span class="sd ${S.sy}" id="sync-dot"></span><span id="sync-lbl">${S.sy==='on'?'Tersinkron':S.sy==='sync'?'Menyinkron...':'Offline'}</span></div>`;}
+
+function bnav(view,isH){
+  const items=isH?[{v:'tasks',i:'ti-clipboard-list',l:'Tugas'},{v:'history',i:'ti-history',l:'Riwayat'}]:[{v:'dashboard',i:'ti-layout-dashboard',l:'Dasbor'},{v:'tasks',i:'ti-clipboard-list',l:'Tugas'},{v:'history',i:'ti-history',l:'Riwayat'},{v:'settings',i:'ti-settings',l:'Setting'}];
+  return`<div class="bnav"><div class="bnav-in">${items.map(it=>`<button class="ni${view===it.v?' active':''}" onclick="${isH?`setSV('${it.v}')`:`setV('${it.v}')`}"><i class="ti ${it.i}"></i><span>${it.l}</span></button>`).join('')}</div></div>`;}
+
+function wrap(sb,tb,content,nav,fab=''){return`<div style="display:contents">${sb}</div><div class="main-area">${tb}${content}${nav}${fab}</div>`;}
+
+/* ============================================================
+   VIEW: LOGIN
+   ============================================================ */
+function vLogin(){return`<div class="login-screen">
+  <div class="login-inner">
+    <div class="login-logo">
+      <div class="login-ring"><img src="images/IMG_0146 (2).PNG" alt="Logo"></div>
+      <div class="login-title">${S.settings.villa}</div>
+      <div class="login-sub">Task Management System</div>
+    </div>
+    <div class="login-cards">
+      <div class="role-card admin" onclick="selRole('admin')">
+        <div class="ri"><i class="ti ti-briefcase"></i></div>
+        <div><div class="rc-name">Manajer / Admin</div><div class="rc-desc">Kelola &amp; monitor semua tugas</div></div>
+        <div class="rc-arr"><i class="ti ti-chevron-right"></i></div>
+      </div>
+      <div class="role-card helper" onclick="selRole('helper')">
+        <div class="ri"><i class="ti ti-user"></i></div>
+        <div><div class="rc-name">Helper / Staf</div><div class="rc-desc">Lihat &amp; kerjakan tugas hari ini</div></div>
+        <div class="rc-arr"><i class="ti ti-chevron-right"></i></div>
+      </div>
+    </div>
+    <div class="login-date">${new Date().toLocaleDateString('id-ID',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</div>
+  </div>
+</div>`;}
+
+/* ============================================================
+   VIEW: DASHBOARD
+   ============================================================ */
+function vDashboard(){
+  const st=stats();
+  const total=st.total+st.done;
+  const pct=total>0?Math.round(st.done/total*100):0;
+  const totalA=Math.max(st.total,1);
+  const prioData=[{k:'kritis',n:st.kritis,c:PCOLOR.kritis},{k:'tinggi',n:st.tinggi,c:PCOLOR.tinggi},{k:'menengah',n:st.menengah,c:PCOLOR.menengah},{k:'rendah',n:st.rendah,c:PCOLOR.rendah}];
+  const circ=282.6;const offs=circ*(1-pct/100);
+  const recent=S.tasks.filter(x=>x.status!=='selesai').sort((a,b)=>PO[a.priority]-PO[b.priority]).slice(0,6);
+  const dayAct=[3,5,8,4,7,st.done,st.prog].slice(-7);const maxA=Math.max(...dayAct,1);
+  const days=['Min','Sen','Sel','Rab','Kam','Jum','Sab'];
+  const todayIdx=new Date().getDay();
+  const dLabels=Array.from({length:7},(_,i)=>days[(todayIdx-6+i+7)%7]);
+  
+  // Helper workload data
+  const activeTasks=S.tasks.filter(x=>x.status!=='selesai');
+  const helperStats={};
+  activeTasks.forEach(t=>{
+    const helper=t.assignedTo||'Belum ditugaskan';
+    if(!helperStats[helper]) helperStats[helper]={total:0,kritis:0,tinggi:0,menengah:0,rendah:0,proses:0,belum:0};
+    helperStats[helper].total++;
+    helperStats[helper][t.priority]++;
+    helperStats[helper][t.status]++;
+  });
+  const helpers=Object.entries(helperStats).sort((a,b)=>b[1].total-a[1].total);
+  return`
+<div class="cs">
+  <div class="page-hdr">
+    <div><div class="page-title">Dasbor</div><div class="page-sub">${new Date().toLocaleDateString('id-ID',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div></div>
+    <button class="tb-btn primary" onclick="openCreate()"><i class="ti ti-plus"></i>Tambah Tugas</button>
+  </div>
+
+  <!-- STAT CARDS -->
+  <div class="stat-grid">
+    <div class="sc c-crit" onclick="setV('tasks');S.filter='kritis';render()">
+      <div class="sc-top"><div class="sc-icon"><i class="ti ti-alert-triangle"></i></div></div>
+      <div class="sc-num" id="sc-crit">${st.crit}</div>
+      <div class="sc-label">Tugas Kritis</div>
+      <div class="sc-sub">${st.crit>0?'Segera tangani':'Tidak ada kritis'}</div>
+    </div>
+    <div class="sc c-high" onclick="setV('tasks');S.filter='proses';render()">
+      <div class="sc-top"><div class="sc-icon"><i class="ti ti-loader"></i></div></div>
+      <div class="sc-num">${st.prog}</div>
+      <div class="sc-label">Sedang Dikerjakan</div>
+      <div class="sc-sub">${st.prog} helper aktif</div>
+    </div>
+    <div class="sc c-warn" onclick="setV('tasks');render()">
+      <div class="sc-top"><div class="sc-icon"><i class="ti ti-list-check"></i></div></div>
+      <div class="sc-num">${st.total}</div>
+      <div class="sc-label">Tugas Aktif</div>
+      <div class="sc-sub">Belum diselesaikan</div>
+    </div>
+    <div class="sc c-ok" onclick="setV('history');render()">
+      <div class="sc-top"><div class="sc-icon"><i class="ti ti-circle-check"></i></div></div>
+      <div class="sc-num">${st.doneToday}</div>
+      <div class="sc-label">Selesai Hari Ini</div>
+      <div class="sc-sub">${st.done} total selesai</div>
+    </div>
+  </div>
+
+  <!-- CHARTS ROW -->
+  <div class="dash-grid dash-wide">
+    <!-- Priority distribution -->
+    <div class="panel">
+      <div class="ph"><span class="ptitle"><i class="ti ti-chart-bar" style="font-size:14px;margin-right:5px;color:var(--teal)"></i>Distribusi Prioritas</span><button class="pact" onclick="setV('tasks');render()">Lihat semua →</button></div>
+      <div class="dist-bar">${prioData.map(p=>`<div class="db-seg ${p.k}" style="width:${Math.round(p.n/totalA*100)}%"></div>`).join('')}</div>
+      <div class="dist-legend">${prioData.map(p=>`
+        <div class="dl-row">
+          <span class="dl-dot" style="background:${p.c}"></span>
+          <span class="dl-name">${PL[p.k]}</span>
+          <div class="dl-bar"><div class="dl-bar-fill" style="width:${Math.round(p.n/totalA*100)}%;background:${p.c}"></div></div>
+          <span class="dl-n">${p.n}</span>
+          <span class="dl-pct">${Math.round(p.n/totalA*100)}%</span>
+        </div>`).join('')}
+      </div>
+    </div>
+
+    <!-- Helper Workload -->
+    <div class="panel">
+      <div class="ph"><span class="ptitle"><i class="ti ti-users" style="font-size:14px;margin-right:5px;color:var(--teal)"></i>Beban Kerja Helper</span><button class="pact" onclick="setV('tasks');render()">Lihat semua →</button></div>
+      ${helpers.length===0?`<div style="text-align:center;padding:24px;color:var(--text3)"><i class="ti ti-user-x" style="font-size:28px;display:block;margin-bottom:8px;color:var(--text4)"></i>Belum ada penugasan</div>`
+      :helpers.slice(0,5).map(([name,stat])=>`
+      <div style="padding:12px 0;border-bottom:1px solid var(--border2)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="sb-av helper" style="width:28px;height:28px;font-size:11px">${name.charAt(0).toUpperCase()}</div>
+            <span style="font-weight:600;color:var(--text)">${name}</span>
+          </div>
+          <span style="font-size:12px;font-weight:700;color:var(--teal)">${stat.total} tugas</span>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${stat.kritis>0?`<span class="pb kritis" style="font-size:10px;padding:2px 8px">${stat.kritis}</span>`:''}
+          ${stat.tinggi>0?`<span class="pb tinggi" style="font-size:10px;padding:2px 8px">${stat.tinggi}</span>`:''}
+          ${stat.menengah>0?`<span class="pb menengah" style="font-size:10px;padding:2px 8px">${stat.menengah}</span>`:''}
+          ${stat.rendah>0?`<span class="pb rendah" style="font-size:10px;padding:2px 8px">${stat.rendah}</span>`:''}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:6px;font-size:11px;color:var(--text3)">
+          ${stat.proses>0?`<span><i class="ti ti-loader" style="font-size:10px;color:#3B82F6;margin-right:3px"></i>${stat.proses} proses</span>`:''}
+          ${stat.belum>0?`<span><i class="ti ti-circle" style="font-size:10px;color:#9CA3AF;margin-right:3px"></i>${stat.belum} belum</span>`:''}
+        </div>
+      </div>`).join('')}
+      ${helpers.length>5?`<div style="text-align:center;padding:8px;color:var(--text3);font-size:12px">+${helpers.length-5} helper lain...</div>`:''}
+    </div>
+
+    <!-- Gauge + activity -->
+    <div class="panel">
+      <div class="ph"><span class="ptitle"><i class="ti ti-trending-up" style="font-size:14px;margin-right:5px;color:var(--teal)"></i>Progress</span></div>
+      <div class="gauge-wrap">
+        <svg class="gauge-svg" viewBox="0 0 96 96">
+          <circle cx="48" cy="48" r="38" fill="none" stroke="var(--border)" stroke-width="9"/>
+          <circle cx="48" cy="48" r="38" fill="none" stroke="var(--teal)" stroke-width="9"
+            stroke-dasharray="${circ}" stroke-dashoffset="${offs}"
+            transform="rotate(-90 48 48)" stroke-linecap="round"
+            style="transition:stroke-dashoffset .8s cubic-bezier(.34,1.56,.64,1)"/>
+          <text x="48" y="44" text-anchor="middle" font-family="Bricolage Grotesque" font-size="16" font-weight="700" fill="var(--text)">${pct}%</text>
+          <text x="48" y="58" text-anchor="middle" font-family="DM Sans" font-size="8" fill="var(--text3)">selesai</text>
+        </svg>
+        <div class="gauge-info">
+          <div class="gauge-stats">
+            <div class="gs-row"><span class="gs-k">Total Tugas</span><span class="gs-v">${total}</span></div>
+            <div class="gs-row"><span class="gs-k">Selesai</span><span class="gs-v" style="color:var(--low-d)">${st.done}</span></div>
+            <div class="gs-row"><span class="gs-k">Aktif</span><span class="gs-v" style="color:var(--amber)">${st.total}</span></div>
+            <div class="gs-row"><span class="gs-k">Hari Ini</span><span class="gs-v" style="color:var(--teal)">${st.doneToday}</span></div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border2)">
+        <div style="font-size:12px;font-weight:600;color:var(--text3);margin-bottom:7px">Aktivitas 7 Hari</div>
+        <div class="act-bars">${dayAct.map((n,i)=>`
+          <div class="act-b-wrap">
+            <div class="act-b-inner"><div class="act-b-fill" style="height:${Math.round(n/maxA*100)}%"></div></div>
+            <span class="act-b-lbl">${dLabels[i]}</span>
+          </div>`).join('')}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RECENT TASKS -->
+  <div class="panel">
+    <div class="ph"><span class="ptitle"><i class="ti ti-clock" style="font-size:14px;margin-right:5px;color:var(--teal)"></i>Tugas Aktif Terbaru</span><button class="pact" onclick="setV('tasks');render()">Lihat semua →</button></div>
+    ${recent.length===0?`<div style="text-align:center;padding:28px;font-size:13px;color:var(--text3)"><i class="ti ti-circle-check" style="font-size:32px;display:block;margin-bottom:8px;color:var(--teal)"></i>Semua tugas bersih!</div>`
+    :recent.map(t=>`
+    <div class="task-row" onclick="setV('tasks');render()">
+      <span class="tr-prio" style="background:${PCOLOR[t.priority]}"></span>
+      <div class="tr-info">
+        <div class="tr-t">${t.title}</div>
+        <div class="tr-m">${t.location||'—'}${t.assignedTo?' · '+t.assignedTo:''} · ${ftime(t.createdAt)}</div>
+      </div>
+      ${sbg(t.status)}
+    </div>`).join('')}
+  </div>
+
+  <div style="height:24px"></div>
+</div>`;}
+
+/* ============================================================
+   VIEW: TASKS (list + kanban)
+   ============================================================ */
+function vTasks(){
+  const tasks=activeTasks();
+  const st=stats();
+  const isKanban=S.tv==='kanban';
+  const belum=tasksByStatus('belum'),prog=tasksByStatus('proses'),done=tasksByStatus('selesai').slice(0,8);
+
+  return`
+<div class="cs" id="tasks-cs">
+  <div class="page-hdr">
+    <div><div class="page-title">Manajemen Tugas</div><div class="page-sub">${st.total} aktif · ${st.done} selesai</div></div>
+    <div style="display:flex;gap:8px">
+      <button class="tb-btn" onclick="doRefresh()"><i class="ti ti-refresh"></i><span class="hide-sm">Sinkron</span></button>
+      <button class="tb-btn primary" onclick="openCreate()"><i class="ti ti-plus"></i><span class="hide-sm">Tambah Tugas</span></button>
+    </div>
+  </div>
+
+  <!-- TOOLBAR -->
+  <div class="toolbar">
+    <div class="srch"><i class="ti ti-search"></i><input placeholder="Cari tugas atau lokasi..." value="${S.search}" oninput="S.search=this.value;refreshList()" id="srch-in"></div>
+    <div class="vt-btns">
+      <button class="vt${S.tv==='list'?' active':''}" onclick="S.tv='list';render()"><i class="ti ti-list"></i><span class="hide-sm">List</span></button>
+      <button class="vt${S.tv==='kanban'?' active':''}" onclick="S.tv='kanban';render()"><i class="ti ti-layout-columns"></i><span class="hide-sm">Kanban</span></button>
+    </div>
+  </div>
+
+  <!-- FILTER PILLS (list only) -->
+  ${!isKanban?`<div class="ftabs">
+    ${[{k:'all',l:'Semua',c:''},{k:'kritis',l:'Kritis',c:PCOLOR.kritis},{k:'tinggi',l:'Tinggi',c:PCOLOR.tinggi},{k:'menengah',l:'Menengah',c:PCOLOR.menengah},{k:'rendah',l:'Rendah',c:PCOLOR.rendah},{k:'proses',l:'Sedang Proses',c:'#2563EB'},{k:'belum',l:'Belum Mulai',c:'#6B7280'}].map(f=>`
+    <button class="ft${S.filter===f.k?' active':''}" onclick="S.filter='${f.k}';refreshList()">${f.c?`<span class="ftd" style="background:${f.c}"></span>`:''}${f.l}</button>`).join('')}
+  </div>`:''}
+
+  <!-- LIST VIEW -->
+  ${!isKanban?`<div id="task-list">
+    ${tasks.length===0?`<div class="empty"><div class="empty-ico"><i class="ti ti-clipboard-list"></i></div><h3>Tidak Ada Tugas</h3><p>${S.search||S.filter!=='all'?'Tidak ada tugas yang sesuai filter':'Tap tombol + untuk menambah tugas baru'}</p></div>`
+    :tasks.map(t=>tc(t,false)).join('')}
+  </div>`
+
+  /* KANBAN VIEW */
+  :`<div class="kboard">
+    <div class="kcol" data-col="belum" ondragover="kDragOver(event,'belum')" ondragleave="kDragLeave()" ondrop="kDrop(event,'belum')">
+      <div class="kch"><span class="kct"><span class="kcd" style="background:#9CA3AF"></span>Belum Dimulai</span><span class="kcc">${belum.length}</span></div>
+      <div class="kscroll">${belum.length===0?`<div class="kempty"><i class="ti ti-inbox"></i>Kosong</div>`:belum.map(t=>kc(t)).join('')}</div>
+    </div>
+    <div class="kcol" data-col="proses" ondragover="kDragOver(event,'proses')" ondragleave="kDragLeave()" ondrop="kDrop(event,'proses')">
+      <div class="kch"><span class="kct"><span class="kcd" style="background:#3B82F6"></span>Sedang Dikerjakan</span><span class="kcc">${prog.length}</span></div>
+      <div class="kscroll">${prog.length===0?`<div class="kempty"><i class="ti ti-loader"></i>Kosong</div>`:prog.map(t=>kc(t)).join('')}</div>
+    </div>
+    <div class="kcol" data-col="selesai" ondragover="kDragOver(event,'selesai')" ondragleave="kDragLeave()" ondrop="kDrop(event,'selesai')">
+      <div class="kch"><span class="kct"><span class="kcd" style="background:var(--low)"></span>Selesai Terbaru</span><span class="kcc">${done.length}</span></div>
+      <div class="kscroll">${done.length===0?`<div class="kempty"><i class="ti ti-circle-check"></i>Belum ada</div>`:done.map(t=>kc(t)).join('')}</div>
+    </div>
+  </div>`}
+
+  <div style="height:80px"></div>
+</div>`;}
+
+/* ============================================================
+   VIEW: HISTORY
+   ============================================================ */
+function vHistory(){
+  const done=doneTasks();
+  return`<div class="cs">
+  <div class="page-hdr">
+    <div><div class="page-title">Riwayat Pekerjaan</div><div class="page-sub">${done.length} tugas selesai</div></div>
+    <button class="tb-btn" onclick="doRefresh()"><i class="ti ti-refresh"></i>Muat Ulang</button>
+  </div>
+  ${done.length===0?`<div class="empty"><div class="empty-ico"><i class="ti ti-history"></i></div><h3>Belum Ada Riwayat</h3><p>Tugas yang diselesaikan akan tampil di sini</p></div>`
+  :done.map(t=>`<div class="hcard">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+      <div>${pb(t.priority)}<div style="font-size:14px;font-weight:600;color:var(--text2);margin-top:6px">${t.title}</div>${t.location?`<div style="font-size:12px;color:var(--text3);margin-top:3px"><i class="ti ti-map-pin" style="font-size:11px"></i> ${t.location}</div>`:''}${t.assignedTo?`<div style="font-size:12px;color:var(--text3);margin-top:3px"><i class="ti ti-user" style="font-size:11px"></i> ${t.assignedTo}</div>`:''}</div>
+      ${sbg('selesai')}
+    </div>
+    ${t.photos&&t.photos.length>0?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+      ${t.photos.map(p=>`<div style="position:relative;width:60px;height:60px;border-radius:var(--r8);overflow:hidden;border:1px solid var(--border)">
+        <img src="${p.url}" style="width:100%;height:100%;object-fit:cover" onclick="openPhoto('${p.url}')">
+      </div>`).join('')}
+    </div>`:''}
+    ${t.completionNote?`<p style="font-size:12px;color:var(--text2);background:var(--low-l);padding:8px 10px;border-radius:var(--r8);border:1px solid var(--low-m);margin-top:8px"><i class="ti ti-message-2" style="color:var(--low-d);margin-right:6px"></i>${t.completionNote}</p>`:''}
+    <div class="hmeta"><span>Dibuat: ${ftime(t.createdAt)}</span>${t.completedAt?`<span>·</span><span>Selesai: ${ftime(t.completedAt)}</span>`:''}</div>
+    <div style="margin-top:9px"><button class="btn btn-g btn-sm" onclick="restoreT('${t.id}')"><i class="ti ti-arrow-back-up"></i>Kembalikan</button></div>
+  </div>`).join('')}
+  <div style="height:24px"></div>
+</div>`;}
+
+/* ============================================================
+   VIEW: SETTINGS
+   ============================================================ */
+function vSettings(){
+  const scriptCode=[
+    '// ============================================================',
+    '// VILLATASK — Google Apps Script Backend',
+    '// ============================================================',
+    '// 1. Buat Google Sheet, buat 2 sheet: "Tugas" & "Devices"',
+    '// 2. Ganti SPREADSHEET_ID di bawah dengan ID sheet Anda',
+    '// 3. Buka script.google.com → Proyek Baru → paste kode ini',
+    '// 4. Deploy → Web App → Execute as: Me | Anyone → Salin URL',
+    '// ============================================================',
+    '',
+    'const SS_ID = "SPREADSHEET_ID";',
+    'const SH_TUGAS = "Tugas";',
+    'const SH_DEVICES = "Devices";',
+    '// Headers Tugas:',
+    '// id | title | description | location | priority | status |',
+    '// assignedTo | photos(JSON) | completionNote | createdAt | updatedAt | completedAt',
+    '// Headers Devices: token | helperName | createdAt',
+    '',
+    '// ======================== DO GET ========================',
+    'function doGet(e) {',
+    '  const a = e?.parameter?.action || "getTasks";',
+    '  const s = SpreadsheetApp.openById(SS_ID).getSheetByName(SH_TUGAS);',
+    '  const rows = s.getDataRange().getValues();',
+    '  if (rows.length < 2) return out({ tasks: [] });',
+    '  const tasks = rows.slice(1).filter(r => r[0]).map(r => ({',
+    '    id: r[0], title: r[1], description: r[2]||"",',
+    '    location: r[3]||"", priority: r[4], status: r[5],',
+    '    assignedTo: r[6]||"", photos: JSON.parse(r[7]||"[]"),',
+    '    completionNote: r[8]||"", createdAt: r[9], updatedAt: r[10], completedAt: r[11]||null',
+    '  }));',
+    '  return out({ tasks: a === "getHistory" ? tasks.filter(t => t.status === "selesai") : tasks.filter(t => t.status !== "selesai") });',
+    '}',
+    '',
+    '// ======================== DO POST ========================',
+    'function doPost(e) {',
+    '  const d = JSON.parse(e.postData.contents);',
+    '  const s = SpreadsheetApp.openById(SS_ID).getSheetByName(SH_TUGAS);',
+    '  const dev = SpreadsheetApp.openById(SS_ID).getSheetByName(SH_DEVICES);',
+    '',
+    '  // CREATE TASK',
+    '  if (d.action === "createTask") {',
+    '    const t = d.task;',
+    '    s.appendRow([t.id, t.title, t.description||"", t.location||"",',
+    '      t.priority, t.status||"belum", t.assignedTo||"",',
+    '      JSON.stringify(t.photos||[]), t.completionNote||"",',
+    '      t.createdAt, t.updatedAt, t.completedAt||""]);',
+    '    return out({ success: true });',
+    '  }',
+    '',
+    '  // UPDATE STATUS',
+    '  if (d.action === "updateTask") {',
+    '    const rows = s.getDataRange().getValues();',
+    '    const now = new Date().toISOString();',
+    '    for (let i=1; i<rows.length; i++) {',
+    '      if (rows[i][0] === d.id) {',
+    '        s.getRange(i+1, 6).setValue(d.status); // status',
+    '        s.getRange(i+1, 11).setValue(now); // updatedAt',
+    '        if (d.status === "selesai") s.getRange(i+1, 12).setValue(now); // completedAt',
+    '        return out({ success: true });',
+    '      }',
+    '    }',
+    '    return out({ error: "not found" });',
+    '  }',
+    '',
+    '  // UPDATE FULL TASK',
+    '  if (d.action === "updateTaskFull") {',
+    '    const rows = s.getDataRange().getValues();',
+    '    for (let i=1; i<rows.length; i++) {',
+    '      if (rows[i][0] === d.task.id) {',
+    '        const t = d.task;',
+    '        s.getRange(i+1, 2).setValue(t.title);',
+    '        s.getRange(i+1, 3).setValue(t.description||"");',
+    '        s.getRange(i+1, 4).setValue(t.location||"");',
+    '        s.getRange(i+1, 5).setValue(t.priority);',
+    '        s.getRange(i+1, 6).setValue(t.status);',
+    '        s.getRange(i+1, 7).setValue(t.assignedTo||"");',
+    '        s.getRange(i+1, 8).setValue(JSON.stringify(t.photos||[]));',
+    '        s.getRange(i+1, 9).setValue(t.completionNote||"");',
+    '        s.getRange(i+1, 11).setValue(t.updatedAt);',
+    '        if(t.completedAt) s.getRange(i+1, 12).setValue(t.completedAt);',
+    '        return out({ success: true });',
+    '      }',
+    '    }',
+    '    return out({ error: "not found" });',
+    '  }',
+    '',
+    '  // DELETE TASK',
+    '  if (d.action === "deleteTask") {',
+    '    const rows = s.getDataRange().getValues();',
+    '    for (let i=1; i<rows.length; i++) {',
+    '      if (rows[i][0] === d.id) { s.deleteRow(i+1); return out({ success: true }); }',
+    '    }',
+    '    return out({ error: "not found" });',
+    '  }',
+    '',
+    '  // REGISTER FCM DEVICE',
+    '  if (d.action === "registerDevice") {',
+    '    const dRows = dev.getDataRange().getValues();',
+    '    for (let i=1; i<dRows.length; i++) {',
+    '      if (dRows[i][0] === d.token) {',
+    '        if (d.helperName) dev.getRange(i+1, 2).setValue(d.helperName);',
+    '        return out({ success: true, exists: true });',
+    '      }',
+    '    }',
+    '    dev.appendRow([d.token, d.helperName||"", new Date().toISOString()]);',
+    '    return out({ success: true });',
+    '  }',
+    '',
+    '  // SEND PUSH NOTIFICATION + WHATSAPP',
+    '  if (d.action === "sendNotification") {',
+    '    const title = "Tugas Baru: " + d.taskTitle;',
+    '    const body = "Prioritas: " + d.priority;',
+    '    // Send FCM to matching device tokens',
+    '    const dRows = dev.getDataRange().getValues();',
+    '    let tokens = [];',
+    '    for (let i=1; i<dRows.length; i++) {',
+    '      if (dRows[i][1] && dRows[i][1].toLowerCase() === (d.helperName||"").toLowerCase()) {',
+    '        tokens.push(dRows[i][0]);',
+    '      }',
+    '    }',
+    '    // Fallback: send to all if helper not registered',
+    '    if (tokens.length === 0) {',
+    '      for (let i=1; i<dRows.length; i++) { if (dRows[i][0]) tokens.push(dRows[i][0]); }',
+    '    }',
+    '    tokens.forEach(tok => {',
+    '      try {',
+    '        const proj = PropertiesService.getScriptProperties().getProperty("FCM_PROJECT_ID");',
+    '        if (proj) UrlFetchApp.fetch("https://fcm.googleapis.com/v1/projects/"+proj+"/messages:send", {',
+    '          method: "POST", muteHttpExceptions: true,',
+    '          headers: { Authorization: "Bearer " + getFCMToken(), "Content-Type": "application/json" },',
+    '          payload: JSON.stringify({ message: { token: tok, notification: { title, body },',
+    '            data: d.data||{}, android: { priority: "high" } } })',
+    '        });',
+    '      } catch(e) {}',
+    '    });',
+    '    return out({ success: true });',
+    '  }',
+    '',
+    '  return out({ error: "Unknown action" });',
+    '}',
+    '',
+    '// ======================== FCM AUTH ========================',
+    'function getFCMToken() {',
+    '  const key = PropertiesService.getScriptProperties().getProperty("FCM_PRIVATE_KEY");',
+    '  const email = PropertiesService.getScriptProperties().getProperty("FCM_CLIENT_EMAIL");',
+    '  if (!key || !email) return null;',
+    '  const now = Math.floor(Date.now()/1000);',
+    '  const jwt = btoa(JSON.stringify({alg:"RS256",typ:"JWT"})) + "." +',
+    '             btoa(JSON.stringify({iss:email,scope:"https://www.googleapis.com/auth/firebase.messaging",',
+    '             aud:"https://oauth2.googleapis.com/token",exp:now+3600,iat:now}));',
+    '  const sig = Utilities.computeRsaSha256Signature(jwt, key);',
+    '  const res = UrlFetchApp.fetch("https://oauth2.googleapis.com/token", {',
+    '    method: "POST", muteHttpExceptions: true,',
+    '    payload: { grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: jwt + "." + Utilities.base64Encode(sig) }',
+    '  });',
+    '  return JSON.parse(res.getContentText()).access_token;',
+    '}',
+    '',
+    '// ======================== HELPERS ========================',
+    'function out(d) { return ContentService.createTextOutput(JSON.stringify(d)).setMimeType(ContentService.MimeType.JSON); }'
+  ].join('\n');
+
+  return`<div class="cs">
+  <div class="page-hdr"><div><div class="page-title">Pengaturan</div><div class="page-sub">Konfigurasi sistem</div></div></div>
+
+  <div class="scard">
+    <h3><i class="ti ti-building" style="color:var(--teal);margin-right:6px"></i>Informasi Villa</h3>
+    <div class="fg"><label class="flbl">Nama Villa</label><input class="finput" type="text" id="set-villa" value="${S.settings.villa}" placeholder="Nama villa Anda"></div>
+    <button class="btn btn-p btn-full" onclick="saveGeneral()"><i class="ti ti-device-floppy"></i>Simpan Perubahan</button>
+  </div>
+
+  <div class="scard">
+    <h3><i class="ti ti-table" style="color:var(--teal);margin-right:6px"></i>Integrasi Google Spreadsheet</h3>
+    <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg);border-radius:var(--r8);margin-bottom:14px;font-size:13px;color:var(--text2)">
+      <span class="sd ${S.sy}"></span>
+      <span>${S.sy==='on'?'Terhubung ke Google Sheets':S.sy==='sync'?'Menyinkron...':'Belum terhubung — mode lokal aktif'}</span>
+    </div>
+    <div class="fg">
+      <label class="flbl">URL Google Apps Script</label>
+      <input class="finput" type="url" id="set-url" value="${S.settings.url}" placeholder="https://script.google.com/macros/s/...">
+      <div style="font-size:11px;color:var(--text3);margin-top:5px">Paste URL deployment Apps Script di sini</div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-p" style="flex:1" onclick="saveUrl()"><i class="ti ti-link"></i>Hubungkan</button>
+      <button class="btn btn-g" style="flex:1" onclick="testConn()"><i class="ti ti-plug"></i>Uji Koneksi</button>
+    </div>
+  </div>
+
+  <div class="scard">
+    <h3><i class="ti ti-bell" style="color:var(--teal);margin-right:6px"></i>Push Notifications (Firebase FCM)</h3>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Konfigurasi untuk notifikasi real-time ke helper Android</div>
+    <div class="fg"><label class="flbl">API Key</label><input class="finput" type="text" id="set-fcm-api" value="${S.settings.fcmApiKey||'AIzaSyBJw8Bp4roUjaU-qniJzEiYTOGeYAFPh98'}" placeholder="AIzaSy..."></div>
+    <div class="fg"><label class="flbl">Project ID</label><input class="finput" type="text" id="set-fcm-project" value="${S.settings.fcmProjectId||'helper-3931b'}" placeholder="your-project-id"></div>
+    <div class="fg"><label class="flbl">App ID</label><input class="finput" type="text" id="set-fcm-appid" value="${S.settings.fcmAppId||'1:124156389502:web:e5032723b476c86b5dd02f'}" placeholder="1:123456789:web:abcdef"></div>
+    <div class="fg"><label class="flbl">VAPID Key (Web Push)</label><input class="finput" type="text" id="set-fcm-vapid" value="${S.settings.fcmVapidKey||'BB4kgGYwrxD_Od7QTSaFq3_HVZekqmz_NLbSyhAGLklc02oO0uN1yIFPh4Ocabtzrwi2ojiQ_oxL0TMxLXSSCA0'}" placeholder="BLx..."></div>
+    <div class="fg"><label class="flbl">Auth Domain</label><input class="finput" type="text" id="set-fcm-auth" value="${S.settings.fcmAuthDomain||'helper-3931b.firebaseapp.com'}" placeholder="your-project.firebaseapp.com"></div>
+    <div class="fg"><label class="flbl">Storage Bucket</label><input class="finput" type="text" id="set-fcm-bucket" value="${S.settings.fcmBucket||'helper-3931b.firebasestorage.app'}" placeholder="your-project.appspot.com"></div>
+    <div class="fg"><label class="flbl">Messaging Sender ID</label><input class="finput" type="text" id="set-fcm-sender" value="${S.settings.fcmSenderId||'124156389502'}" placeholder="123456789"></div>
+    <button class="btn btn-p btn-full" onclick="saveFCMConfig()"><i class="ti ti-device-floppy"></i>Simpan Konfigurasi FCM</button>
+    <div style="margin-top:10px;font-size:11px;color:var(--text3)">
+      <b>Cara dapatkan VAPID Key:</b> Firebase Console → Project Settings → Cloud Messaging → Web configuration → Generate key pair
+    </div>
+  </div>
+
+  <div class="scard">
+    <h3><i class="ti ti-brand-whatsapp" style="color:#25D366;margin-right:6px"></i>Notifikasi WhatsApp</h3>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Notifikasi otomatis ke helper via WhatsApp (menggunakan CallMeBot API — gratis)</div>
+    <div class="fg"><label class="flbl">Nomor Telepon Helper (format internasional)</label><input class="finput" type="text" id="set-wa-phone" value="${S.settings.waPhone||''}" placeholder="628123456789"></div>
+    <div class="fg"><label class="flbl">API Key CallMeBot</label><input class="finput" type="text" id="set-wa-key" value="${S.settings.waApiKey||''}" placeholder="1234567 (dapatkan di callmebot.com)"></div>
+    <div style="margin-bottom:12px;font-size:11px;color:var(--text3)">
+      <b>Cara setup CallMeBot:</b>
+      <ol style="margin-top:6px;padding-left:18px">
+        <li>Buka WhatsApp → kirim pesan ke <b>+62 852-1554-1155</b> (bot CallMeBot)</li>
+        <li>Ketik <code>/start</code> atau <code>I allow callmebot to send me messages</code></li>
+        <li>Anda akan mendapat <b>API Key</b> via WhatsApp</li>
+        <li>Masukkan API Key &amp; nomor telepon helper di atas</li>
+      </ol>
+    </div>
+    <button class="btn btn-p btn-full" onclick="saveWAConfig()"><i class="ti ti-device-floppy"></i>Simpan Konfigurasi WA</button>
+    <button class="btn btn-g btn-full" style="margin-top:6px" onclick="testWA()"><i class="ti ti-send"></i>Kirim Notifikasi Uji Coba</button>
+  </div>
+
+  <div class="scard">
+    <h3><i class="ti ti-code" style="color:var(--teal);margin-right:6px"></i>Kode Google Apps Script</h3>
+    <div style="margin-bottom:14px">${['<a href="https://docs.google.com/spreadsheets" target="_blank" style="color:var(--teal)">Buat Google Sheet baru</a> → Buat 2 sheet: <b>Tugas</b> & <b>Devices</b>','Buka <a href="https://script.google.com" target="_blank" style="color:var(--teal)">script.google.com</a> → Proyek Baru','Paste kode gas-backend.gs di bawah, ganti <code>SPREADSHEET_ID</code> dengan ID Sheet Anda','Deploy → New Deployment → Web App → Execute as: Me | Anyone → Salin URL','Paste URL deployment ke field di atas → klik <b>Hubungkan</b>'].map((s,i)=>`<div class="step-row"><span class="sn">${i+1}</span><span>${s}</span></div>`).join('')}</div>
+    <div style="background:var(--bg);border-radius:var(--r8);padding:10px 13px;margin-bottom:12px">
+      <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px">📌 Contoh Header Sheet "Tugas" (baris 1):</div>
+      <div style="font-size:10px;color:var(--text3);font-family:monospace;white-space:pre">id | title | description | location | priority | status | assignedTo | photos(JSON) | completionNote | createdAt | updatedAt | completedAt</div>
+    </div>
+    <div class="codeblock" id="sc-code">${scriptCode.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+    <button class="btn btn-g btn-full" style="margin-top:10px" onclick="copyScript()"><i class="ti ti-copy"></i>Salin Kode</button>
+  </div>
+
+  <div class="scard" style="border-color:var(--crit-m)">
+    <h3 style="color:var(--crit-d)"><i class="ti ti-alert-triangle" style="margin-right:6px"></i>Reset Data</h3>
+    <button class="btn btn-d btn-full" onclick="openC({ico:'dang',title:'Hapus Semua Data?',msg:'Semua tugas lokal dihapus. Data Google Sheets tidak terpengaruh.',ok:'Hapus Semua',okCls:'btn-d',onOk:()=>{S.tasks=[];ss();toast('Data lokal dihapus');render();}})"><i class="ti ti-trash"></i>Hapus Semua Data Lokal</button>
+  </div>
+  <div style="height:24px"></div>
+</div>`;}
+
+/* ============================================================
+   VIEW: HELPER QUEUE
+   ============================================================ */
+function vHelperTasks(){
+  const queue=S.tasks.filter(x=>x.status!=='selesai').sort((a,b)=>PO[a.priority]-PO[b.priority]);
+  const top=queue[0],st=stats();
+  return`<div class="scr" style="flex:1;overflow-y:auto">
+  ${top?`<div class="helper-hero">
+    <div class="hh-num">${queue.length}</div>
+    <div class="hh-tag">▲ PRIORITAS UTAMA</div>
+    <div class="hh-title">${top.title}</div>
+    ${top.location?`<div class="hh-loc"><i class="ti ti-map-pin"></i>${top.location}</div>`:''}
+    ${pb(top.priority)}
+    <div class="hh-acts" style="margin-top:14px">
+      ${top.status==='belum'?`<button class="hbtn start" onclick="hStart('${top.id}')"><i class="ti ti-player-play"></i>Mulai Kerjakan</button>`:''}
+      ${top.status==='proses'?`<button class="hbtn done" onclick="hDone('${top.id}')"><i class="ti ti-check"></i>Tandai Selesai</button>`:''}
+    </div>
+  </div>`:`<div style="background:linear-gradient(135deg,var(--night),var(--night2));padding:32px;text-align:center;flex-shrink:0">
+    <i class="ti ti-smart-home" style="font-size:48px;color:rgba(255,255,255,.2)"></i>
+    <div style="font-family:var(--fn-h);font-size:22px;font-weight:700;color:#fff;margin-top:12px">Semua Bersih!</div>
+    <div style="font-size:13px;color:rgba(255,255,255,.4);margin-top:6px">Tidak ada tugas aktif</div>
+  </div>`}
+  <div style="padding:16px">
+    <div class="mini-stats" style="margin-top:4px">
+      <div class="ms"><div class="ms-n">${queue.length}</div><div class="ms-l">Sisa Tugas</div></div>
+      <div class="ms"><div class="ms-n" style="color:#2563EB">${st.prog}</div><div class="ms-l">Sedang Proses</div></div>
+      <div class="ms"><div class="ms-n" style="color:var(--low-d)">${st.doneToday}</div><div class="ms-l">Selesai Hari Ini</div></div>
+    </div>
+    <div style="font-family:var(--fn-h);font-size:15px;font-weight:700;color:var(--text);margin-bottom:12px">Antrian Tugas (${queue.length})</div>
+    ${queue.length===0?`<div class="empty"><div class="empty-ico"><i class="ti ti-circle-check"></i></div><h3>Semua Selesai!</h3><p>Tunggu penugasan berikutnya</p></div>`:queue.map(t=>tc(t,true)).join('')}
+    <div style="height:20px"></div>
+  </div>
+</div>`;}
+
+function vHelperHistory(){
+  const done=doneTasks();
+  return`<div class="cs">
+  <div class="page-hdr">
+    <div><div class="page-title">Tugas Selesai</div><div class="page-sub">${done.length} pekerjaan</div></div>
+    <button class="tb-btn" onclick="doRefresh()"><i class="ti ti-refresh"></i>Muat</button>
+  </div>
+  ${done.length===0?`<div class="empty"><div class="empty-ico"><i class="ti ti-history"></i></div><h3>Belum Ada Riwayat</h3><p>Tugas yang selesai tampil di sini</p></div>`
+  :done.slice(0,30).map(t=>`<div class="hcard">${pb(t.priority)}<div style="font-size:14px;font-weight:600;color:var(--text2);margin-top:6px">${t.title}</div>${t.location?`<div style="font-size:12px;color:var(--text3);margin-top:3px"><i class="ti ti-map-pin" style="font-size:11px"></i> ${t.location}</div>`:''}${t.assignedTo?`<div style="font-size:12px;color:var(--text3);margin-top:3px"><i class="ti ti-user" style="font-size:11px"></i> ${t.assignedTo}</div>`:''}${t.photos&&t.photos.length>0?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${t.photos.map(p=>`<div style="position:relative;width:60px;height:60px;border-radius:var(--r8);overflow:hidden;border:1px solid var(--border)"><img src="${p.url}" style="width:100%;height:100%;object-fit:cover" onclick="openPhoto('${p.url}')"></div>`).join('')}</div>`:''}${t.completionNote?`<p style="font-size:12px;color:var(--text2);background:var(--low-l);padding:8px 10px;border-radius:var(--r8);border:1px solid var(--low-m);margin-top:8px"><i class="ti ti-message-2" style="color:var(--low-d);margin-right:6px"></i>${t.completionNote}</p>`:''}<div class="hmeta"><span>Selesai: ${ftime(t.completedAt)}</span></div></div>`).join('')}
+  <div style="height:20px"></div>
+</div>`;}
+
+/* ============================================================
+   MODAL: PHOTO UPLOAD (HELPER COMPLETE)
+   ============================================================ */
+function modalPhoto(taskId){
+  return`<h2 class="mtitle">Foto Hasil Pekerjaan</h2>
+  <div class="fg"><label class="flbl">Tambah Foto Bukti</label>
+    <div id="photo-drop" class="ftarea" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:24px;cursor:pointer;border-style:dashed;background:var(--bg);transition:all .2s">
+      <i class="ti ti-upload" style="font-size:28px;color:var(--teal)"></i>
+      <span style="font-size:13px;color:var(--text2)">Klik atau drag foto ke sini</span>
+      <span style="font-size:11px;color:var(--text3)">Maks 5 foto, max 5MB per foto</span>
+      <input type="file" id="photo-input" accept="image/*" multiple style="display:none" onchange="handlePhotos(event,'${taskId}')">
+    </div>
+    <div id="photo-preview" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px"></div>
+  </div>
+  <div class="fg"><label class="flbl">Catatan Penyelesaian</label><textarea class="ftarea" id="t-complete-note" placeholder="Catatan tambahan (opsional)..."></textarea></div>
+  <div style="display:flex;gap:10px;margin-top:4px">
+    <button class="btn btn-g" style="flex:1" onclick="closeM()">Batal</button>
+    <button class="btn btn-s" style="flex:2" onclick="doCompleteWithPhotos('${taskId}')"><i class="ti ti-check"></i>Kirim &amp; Selesai</button>
+  </div>`;
+}
+
+/* ============================================================
+   MODAL: CREATE / EDIT TASK
+   ============================================================ */
+function modalTask(edit){
+  const t=edit||{};
+  const opts=[{v:'kritis',l:'Kritis',s:'Tamu menunggu'},{v:'tinggi',l:'Tinggi',s:'Segera dikerjakan'},{v:'menengah',l:'Menengah',s:'Standar'},{v:'rendah',l:'Rendah',s:'Rutin'}];
+  return`<h2 class="mtitle">${edit?'Edit Tugas':'Tambah Tugas Baru'}</h2>
+  <div class="fg"><label class="flbl">Nama Tugas *</label><input class="finput" type="text" id="t-title" placeholder="Contoh: Antar Obat Kolam" value="${t.title||''}"></div>
+  <div class="fg"><label class="flbl">Lokasi / Nomor Kamar</label><input class="finput" type="text" id="t-loc" placeholder="Contoh: Villa Agave" value="${t.location||''}"></div>
+  <div class="fg"><label class="flbl">Nama Pelaksana (Helper)</label><input class="finput" type="text" id="t-assigned" placeholder="Contoh: Acil / Caing" value="${t.assignedTo||''}"></div>
+  <div class="fg"><label class="flbl">Catatan Tambahan</label><textarea class="ftarea" id="t-desc" placeholder="Detail instruksi untuk helper...">${t.description||''}</textarea></div>
+  <div class="fg"><label class="flbl">Tingkat Prioritas *</label>
+    <div class="psel">${opts.map(p=>`<div class="popt${(t.priority||'menengah')===p.v?' sel':''}" data-v="${p.v}" onclick="selP('${p.v}')"><span class="od"></span><div><div style="font-size:13px;font-weight:600">${p.l}</div><div style="font-size:11px;opacity:.65">${p.s}</div></div></div>`).join('')}</div>
+  </div>
+  <div style="display:flex;gap:10px;margin-top:4px">
+    <button class="btn btn-g" style="flex:1" onclick="closeM()">Batal</button>
+    <button class="btn btn-p" style="flex:2" onclick="${edit?`doEdit('${edit.id}')`:'doCreate()'}">${edit?'<i class="ti ti-device-floppy"></i>Simpan':'<i class="ti ti-plus"></i>Buat Tugas'}</button>
+  </div>`;}
+
+/* ============================================================
+   EVENT HANDLERS
+   ============================================================ */
+function selRole(r){
+  S.role=r;
+  S.view=r==='helper'?'tasks':'dashboard';
+  render();
+  if(S.settings.url)loadGs().then(render);
+  
+  // Request FCM token for helpers
+  if(r==='helper' && window.requestFCMToken){
+    setTimeout(() => window.requestFCMToken(), 1000);
+  }
+}
+function goLogin(){S.role=null;S.view='login';render();}
+function setV(v){S.view=v;S.filter='all';S.search='';render();}
+function setSV(v){S.view=v;render();}
+
+function refreshList(){
+  if(S.role==='admin'&&S.tv!=='kanban'){
+    const el=document.getElementById('task-list');if(!el)return;
+    const tasks=activeTasks();
+    el.innerHTML=tasks.length===0?`<div class="empty"><div class="empty-ico"><i class="ti ti-clipboard-list"></i></div><h3>Tidak Ada Tugas</h3><p>Tidak ada tugas yang sesuai filter</p></div>`:tasks.map(t=>tc(t,false)).join('');
+    document.querySelectorAll('.ft').forEach(b=>{const k=b.getAttribute('onclick')?.match(/'([^']+)'\)/)?.[1];b.classList.toggle('active',k===S.filter);});
+  }
+}
+
+async function doRefresh(){toast('<i class="ti ti-refresh"></i> Memperbarui...');if(S.settings.url)await loadGs();render();toast('<i class="ti ti-check"></i> Diperbarui','succ');}
+
+function openCreate(){openM(modalTask(null));}
+function openEdit(id){const t=S.tasks.find(x=>x.id===id);if(t)openM(modalTask(t));}
+function selP(v){document.querySelectorAll('.popt').forEach(e=>e.classList.toggle('sel',e.dataset.v===v));}
+function getP(){return document.querySelector('.popt.sel')?.dataset.v||'menengah';}
+
+let pendingPhotos=[];
+function handlePhotos(e,taskId){
+  const files=Array.from(e.target.files);
+  const preview=document.getElementById('photo-preview');
+  files.forEach(f=>{
+    if(f.size>5*1024*1024){toast(`<i class="ti ti-alert-circle"></i> ${f.name}: max 5MB`,'err');return;}
+    if(pendingPhotos.length>=5){toast(`<i class="ti ti-alert-circle"></i> Maksimal 5 foto`,'err');return;}
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      pendingPhotos.push({name:f.name,data:ev.target.result,size:f.size});
+      renderPreview();
+    };
+    reader.readAsDataURL(f);
+  });
+  e.target.value='';
+  function renderPreview(){
+    preview.innerHTML=pendingPhotos.map((p,i)=>`<div style="position:relative;width:72px;height:72px;border-radius:var(--r8);overflow:hidden;border:1px solid var(--border)">
+      <img src="${p.data}" style="width:100%;height:100%;object-fit:cover">
+      <button onclick="removePhoto(${i})" style="position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;border:none;cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center"><i class="ti ti-x"></i></button>
+    </div>`).join('');
+  }
+}
+function removePhoto(i){pendingPhotos.splice(i,1);document.getElementById('photo-preview').innerHTML=pendingPhotos.map((p,i)=>`<div style="position:relative;width:72px;height:72px;border-radius:var(--r8);overflow:hidden;border:1px solid var(--border)">
+      <img src="${p.data}" style="width:100%;height:100%;object-fit:cover">
+      <button onclick="removePhoto(${i})" style="position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;border:none;cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center"><i class="ti ti-x"></i></button>
+    </div>`).join('');}
+
+function openPhoto(url){
+  window.open(url,'_blank');
+}
+
+function doCompleteWithPhotos(taskId){
+  const note=document.getElementById('t-complete-note')?.value.trim();
+  const t=S.tasks.find(x=>x.id===taskId);
+  if(!t)return;
+  t.photos=[...(t.photos||[]),...pendingPhotos.map(p=>({url:p.data,name:p.name,uploadedAt:new Date().toISOString()}))];
+  t.completionNote=note;
+  t.updatedAt=new Date().toISOString();
+  t.completedAt=new Date().toISOString();
+  t.status='selesai';
+  pendingPhotos=[];
+  ss();
+  // Sync full task data to backend (includes photos + completionNote)
+  gsync('updateTaskFull',{task:t});
+  gsync('updateTask',{id:taskId,status:'selesai'});
+  toast('<i class="ti ti-check"></i> Tugas diselesaikan dengan foto!','succ');
+  closeM();
+  render();
+}
+
+function doCreate(){
+  const title=document.getElementById('t-title')?.value.trim();
+  if(!title){toast('<i class="ti ti-alert-circle"></i> Nama tugas harus diisi!','err');return;}
+  const assignedTo=document.getElementById('t-assigned')?.value.trim();
+  const newTask=mkTask({title,location:document.getElementById('t-loc')?.value.trim(),description:document.getElementById('t-desc')?.value.trim(),assignedTo,priority:getP()});
+  
+  // Send push notification to assigned helper
+  if(assignedTo && S.settings.url){
+    sendPushNotification(assignedTo, newTask.id, newTask.title, newTask.priority);
+  }
+  
+  closeM();toast('<i class="ti ti-check"></i> Tugas berhasil dibuat','succ');render();
+}
+
+async function sendPushNotification(helperName, taskId, taskTitle, priority){
+  if(!S.settings.url) return;
+  try {
+    await fetch(S.settings.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        action: 'sendNotification', 
+        helperName, 
+        taskId, 
+        taskTitle, 
+        priority,
+        data: { taskId, action: 'open_task' }
+      })
+    });
+  } catch (e) {
+    console.warn('Push notification send failed:', e);
+  }
+  
+  // Send WhatsApp notification if configured
+  const waPhone=S.settings.waPhone;
+  const waKey=S.settings.waApiKey;
+  if(waPhone && waKey){
+    try {
+      const priorityLabel={kritis:'⚠️ KRITIS',tinggi:'🔴 Tinggi',menengah:'🟡 Menengah',rendah:'🟢 Rendah'};
+      const lbl=priorityLabel[priority]||priority;
+      const villa=S.settings.villa||'Villa';
+      const waMsg=encodeURIComponent(
+        `🔔 *${villa} - Tugas Baru*\n\n`+
+        `*${taskTitle}*\n`+
+        `Prioritas: ${lbl}\n`+
+        `Ditugaskan ke: ${helperName||'—'}\n\n`+
+        `📋 Buka aplikasi untuk detail`
+      );
+      await fetch(`https://api.callmebot.com/whatsapp.php?phone=${waPhone}&text=${waMsg}&apikey=${waKey}`);
+    } catch(e) {
+      console.warn('WhatsApp notification failed:', e);
+    }
+  }
+}
+
+function doEdit(id){
+  const title=document.getElementById('t-title')?.value.trim();
+  if(!title){toast('<i class="ti ti-alert-circle"></i> Nama tugas harus diisi!','err');return;}
+  const t=S.tasks.find(x=>x.id===id);if(!t)return;
+  const oldAssigned=t.assignedTo;
+  const newAssigned=document.getElementById('t-assigned')?.value.trim()||'';
+  
+  t.title=title;t.location=document.getElementById('t-loc')?.value.trim()||'';
+  t.assignedTo=newAssigned;
+  t.description=document.getElementById('t-desc')?.value.trim()||'';t.priority=getP();
+  t.updatedAt=new Date().toISOString();ss();gsync('updateTaskFull',{task:t});
+  
+  // Send notification if newly assigned or reassigned
+  if(newAssigned && newAssigned !== oldAssigned && S.settings.url){
+    sendPushNotification(newAssigned, t.id, t.title, t.priority);
+  }
+  
+  closeM();toast('<i class="ti ti-check"></i> Tugas diperbarui','succ');render();
+}
+
+function hStart(id){upSt(id,'proses');toast('<i class="ti ti-player-play"></i> Tugas dimulai!');render();}
+function hDone(id){openM(modalPhoto(id));}
+function aStart(id){upSt(id,'proses');toast('Status diubah → Proses');render();}
+function aDone(id){upSt(id,'selesai');toast('<i class="ti ti-check"></i> Tugas selesai','succ');render();}
+function cDel(id){const t=S.tasks.find(x=>x.id===id);openC({ico:'dang',title:'Hapus Tugas?',msg:`"${t?.title}" akan dihapus permanen.`,ok:'Hapus',okCls:'btn-d',onOk:()=>{delTask(id);toast('Tugas dihapus');render();}});}
+function restoreT(id){const t=S.tasks.find(x=>x.id===id);if(t){t.status='belum';t.completedAt=null;t.updatedAt=new Date().toISOString();ss();gsync('updateTask',{id,status:'belum'});toast('<i class="ti ti-arrow-back-up"></i> Dikembalikan ke antrean');render();}}
+
+function saveGeneral(){S.settings.villa=document.getElementById('set-villa')?.value||S.settings.villa;ss();toast('<i class="ti ti-check"></i> Tersimpan','succ');render();}
+
+function saveFCMConfig(){
+  S.settings.fcmApiKey=document.getElementById('set-fcm-api')?.value.trim();
+  S.settings.fcmProjectId=document.getElementById('set-fcm-project')?.value.trim();
+  S.settings.fcmAppId=document.getElementById('set-fcm-appid')?.value.trim();
+  S.settings.fcmVapidKey=document.getElementById('set-fcm-vapid')?.value.trim();
+  S.settings.fcmAuthDomain=document.getElementById('set-fcm-auth')?.value.trim();
+  S.settings.fcmBucket=document.getElementById('set-fcm-bucket')?.value.trim();
+  S.settings.fcmSenderId=document.getElementById('set-fcm-sender')?.value.trim();
+  ss();
+  // Update window.__FCM for Firebase module (no reload needed)
+  window.__FCM={
+    apiKey:S.settings.fcmApiKey,
+    authDomain:S.settings.fcmAuthDomain,
+    projectId:S.settings.fcmProjectId,
+    bucket:S.settings.fcmBucket,
+    senderId:S.settings.fcmSenderId,
+    appId:S.settings.fcmAppId,
+    vapidKey:S.settings.fcmVapidKey
+  };
+  toast('<i class="ti ti-check"></i> Konfigurasi FCM tersimpan','succ');
+  render();
+}
+function saveUrl(){S.settings.url=document.getElementById('set-url')?.value.trim()||'';ss();if(S.settings.url){toast('Menghubungkan...');loadGs().then(()=>{render();toast('<i class="ti ti-check"></i> Terhubung!','succ');});}else{toast('URL dihapus, mode lokal aktif');render();}}
+async function testConn(){const url=document.getElementById('set-url')?.value.trim();if(!url){toast('<i class="ti ti-alert-circle"></i> Masukkan URL dulu','err');return;}S.settings.url=url;toast('Menguji koneksi...');const r=await gsync('read',{});toast(r?'<i class="ti ti-check"></i> Koneksi berhasil!':'<i class="ti ti-x"></i> Gagal terhubung',r?'succ':'err');}
+function copyScript(){const c=document.getElementById('sc-code')?.innerText;if(c)navigator.clipboard.writeText(c).then(()=>toast('<i class="ti ti-copy"></i> Kode disalin!','succ')).catch(()=>toast('Salin manual dari kotak kode'));}
+
+function saveWAConfig(){
+  S.settings.waPhone=document.getElementById('set-wa-phone')?.value.trim();
+  S.settings.waApiKey=document.getElementById('set-wa-key')?.value.trim();
+  ss();
+  toast('<i class="ti ti-check"></i> Konfigurasi WA tersimpan','succ');
+  render();
+}
+
+async function testWA(){
+  const phone=S.settings.waPhone || document.getElementById('set-wa-phone')?.value.trim();
+  const key=S.settings.waApiKey || document.getElementById('set-wa-key')?.value.trim();
+  if(!phone||!key){toast('<i class="ti ti-alert-circle"></i> Isi nomor WA & API Key dulu','err');return;}
+  toast('Mengirim notifikasi uji coba...');
+  try{
+    const msg=encodeURIComponent('🔔 *VillaTask Test*\nNotifikasi WhatsApp berhasil terhubung!');
+    const r=await fetch(`https://api.callmebot.com/whatsapp.php?phone=${phone}&text=${msg}&apikey=${key}`);
+    if(r.ok)toast('<i class="ti ti-check"></i> Notifikasi terkirim! Cek WhatsApp','succ');
+    else toast('<i class="ti ti-x"></i> Gagal. Cek API Key & nomor','err');
+  }catch(e){toast('<i class="ti ti-x"></i> Gagal: '+e.message,'err');}
+}
+
+/* ============================================================
+   MAIN RENDER
+   ============================================================ */
+function render(){
+  const app=document.getElementById('app');
+  if(!S.role||S.view==='login'){app.innerHTML=vLogin();return;}
+
+  if(S.role==='helper'){
+    const content=S.view==='history'?vHelperHistory():vHelperTasks();
+    const title=S.view==='history'?'Riwayat':'Tugas Helper';
+    app.innerHTML=`<div class="main-area" style="background:var(--bg)">
+      ${mobhdr(title,`<button class="mob-btn" onclick="doRefresh()"><i class="ti ti-refresh"></i></button>`)}
+      ${content}
+      ${bnav(S.view,true)}
+    </div>`;
+    return;
+  }
+
+  // Admin
+  let content='';
+  let tbTitle='',tbSub='';
+  let tbActions=[];
+  if(S.view==='dashboard'){content=vDashboard();tbTitle='Dasbor';tbSub=new Date().toLocaleDateString('id-ID',{weekday:'long',day:'numeric',month:'long'});tbActions=[`<button class="tb-btn" onclick="doRefresh()"><i class="ti ti-refresh"></i>Sinkron</button>`,`<button class="tb-btn primary" onclick="openCreate()"><i class="ti ti-plus"></i>Tambah Tugas</button>`];}
+  else if(S.view==='tasks'){content=vTasks();tbTitle='Manajemen Tugas';tbSub=`${stats().total} aktif`;tbActions=[`<button class="tb-btn" onclick="doRefresh()"><i class="ti ti-refresh"></i>Sinkron</button>`,`<button class="tb-btn primary" onclick="openCreate()"><i class="ti ti-plus"></i>Tambah Tugas</button>`];}
+  else if(S.view==='history'){content=vHistory();tbTitle='Riwayat';tbSub='Pekerjaan selesai';}
+  else if(S.view==='settings'){content=vSettings();tbTitle='Pengaturan';tbSub='Konfigurasi sistem';}
+
+  const mobRefresh=`<button class="mob-btn" onclick="doRefresh()"><i class="ti ti-refresh"></i></button>`;
+  const mobAdd=`<button class="mob-btn" onclick="openCreate()"><i class="ti ti-plus"></i></button>`;
+
+  app.innerHTML=`${sidebar(S.view)}<div class="main-area">
+    ${topbar(tbTitle,tbSub,...tbActions)}
+    ${mobhdr(tbTitle,S.view!=='settings'&&S.view!=='history'?mobAdd:'',mobRefresh)}
+    ${content}
+    ${bnav(S.view,false)}
+  </div>
+  ${(S.view==='tasks'||S.view==='dashboard')?`<button class="fab" onclick="openCreate()"><i class="ti ti-plus"></i></button>`:''}`;
+
+  updSy();
+}
+
+/* overlay close */
+document.getElementById('mov').addEventListener('click',e=>{if(e.target.id==='mov')closeM();});
+document.getElementById('cov').addEventListener('click',e=>{if(e.target.id==='cov')closeC();});
+
+/* photo drop zone drag & drop */
+document.addEventListener('dragover',e=>{const dz=document.getElementById('photo-drop');if(dz&&dz.contains(e.target)){e.preventDefault();dz.classList.add('drag-over');}});
+document.addEventListener('dragleave',e=>{const dz=document.getElementById('photo-drop');if(dz&&!dz.contains(e.relatedTarget))dz.classList.remove('drag-over');});
+document.addEventListener('drop',e=>{const dz=document.getElementById('photo-drop');if(dz&&dz.contains(e.target)){e.preventDefault();dz.classList.remove('drag-over');const files=Array.from(e.dataTransfer.files).filter(f=>f.type.startsWith('image/'));if(files.length){const event={target:{files}};handlePhotos(event,'');}}});
+
+/* ============================================================
+   INIT + DEMO DATA
+   ============================================================ */
+ls();
+if(S.tasks.length===0){
+  [{title:'Siapkan Kamar 5 untuk Tamu VIP',location:'Kamar 5',description:'Ganti sprei & handuk premium. Siapkan bunga & welcome letter. Tamu check-in pukul 14.00.',priority:'kritis'},
+  {title:'Antar Sarapan ke Kamar 2',location:'Kamar 2',description:'Continental breakfast — sudah dipesan sejak malam. Ketuk 3x.',priority:'kritis',status:'proses'},
+  {title:'Bersihkan & Cek Kimia Kolam Renang',location:'Kolam Renang',description:'Bersihkan daun, cek pH (7.2–7.8), kadar klorin. Lapor jika ada kerusakan.',priority:'tinggi'},
+  {title:'Perbaiki AC Kamar 3 (Bocor)',location:'Kamar 3',description:'Tamu melaporkan tetes air dari unit indoor. Hubungi teknisi jika perlu.',priority:'tinggi'},
+  {title:'Isi Ulang Minibar Kamar 3 & 4',location:'Kamar 3 & 4',description:'Lengkapi semua item sesuai standar villa. Catat di logbook.',priority:'menengah'},
+  {title:'Periksa Lampu Taman Belakang',location:'Area Taman',description:'Laporan: beberapa lampu jalur ke villa mati. Ganti bohlam jika perlu.',priority:'rendah'},
+  {title:'Cuci & Setrika Linen',location:'Laundry Room',description:'14 set sprei + 20 handuk dari checkout kemarin.',priority:'menengah',status:'selesai'}
+  ].forEach(d=>mkTask(d));
+  const last=S.tasks.find(x=>x.status==='selesai');if(last){last.completedAt=new Date(Date.now()-7200000).toISOString();}
+  ss();
+}
+render();
+</script>
+</body>
+</html>
