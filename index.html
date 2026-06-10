@@ -725,15 +725,11 @@ async function gsync(act,data){
   }catch(e){S.sy='off';updSy();return null;}
 }
 async function loadGs(){
-  const [activeR, historyR] = await Promise.all([
-    gsync('read',{}),
-    gsync('getHistory',{})
-  ]);
-  if(activeR && activeR.tasks && historyR && historyR.tasks){
-    S.tasks = [...activeR.tasks, ...historyR.tasks];
-    ss();
-  } else if(activeR && activeR.tasks){
+  const activeR = await gsync('read',{});
+  if(activeR && activeR.tasks){
+    const historyR = await gsync('getHistory',{});
     S.tasks = activeR.tasks;
+    if(historyR && historyR.tasks) S.tasks = [...S.tasks, ...historyR.tasks];
     ss();
   }
 }
@@ -908,6 +904,7 @@ function wrap(sb,tb,content,nav,fab=''){return`<div style="display:contents">${s
 /* ============================================================
    VIEW: LOGIN
    ============================================================ */
+function copyAppUrl(){const url=window.location.href;navigator.clipboard.writeText(url).then(()=>toast('URL disalin! Buka di perangkat lain','succ')).catch(()=>toast('Salin manual: '+url));}
 function vLogin(){return`<div class="login-screen">
   <div class="login-inner">
     <div class="login-logo">
@@ -927,6 +924,7 @@ function vLogin(){return`<div class="login-screen">
         <div class="rc-arr"><i class="ti ti-chevron-right"></i></div>
       </div>
     </div>
+    <button onclick="copyAppUrl()" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:var(--r10);padding:10px 16px;color:rgba(255,255,255,.5);font-size:11px;cursor:pointer;width:100%;margin-top:16px;display:flex;align-items:center;justify-content:center;gap:6px;font-family:var(--fn-b)"><i class="ti ti-link" style="font-size:14px"></i>Salin Tautan Aplikasi</button>
     <div class="login-date">${new Date().toLocaleDateString('id-ID',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</div>
   </div>
 </div>`;}
@@ -1413,6 +1411,17 @@ function vSettings(){
     <button class="btn btn-g btn-full" style="margin-top:10px" onclick="copyScript()"><i class="ti ti-copy"></i>Salin Kode</button>
   </div>
 
+  <div class="scard">
+    <h3><i class="ti ti-file-export" style="color:var(--teal);margin-right:6px"></i>Cadangkan / Pindahkan Data</h3>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Export data ke file JSON untuk dipindahkan antar perangkat secara manual</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-p" style="flex:1" onclick="exportData()"><i class="ti ti-download"></i>Export Data</button>
+      <button class="btn btn-g" style="flex:1" onclick="document.getElementById('import-file').click()"><i class="ti ti-upload"></i>Import Data</button>
+    </div>
+    <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(event)">
+    <div style="font-size:11px;color:var(--text3);margin-top:6px">Export → kirim file via WhatsApp/email → buka di perangkat lain → Import</div>
+  </div>
+
   <div class="scard" style="border-color:var(--crit-m)">
     <h3 style="color:var(--crit-d)"><i class="ti ti-alert-triangle" style="margin-right:6px"></i>Reset Data</h3>
     <button class="btn btn-d btn-full" onclick="openC({ico:'dang',title:'Hapus Semua Data?',msg:'Semua tugas lokal dihapus. Data Google Sheets tidak terpengaruh.',ok:'Hapus Semua',okCls:'btn-d',onOk:()=>{S.tasks=[];ss();toast('Data lokal dihapus');render();}})"><i class="ti ti-trash"></i>Hapus Semua Data Lokal</button>
@@ -1509,11 +1518,16 @@ function modalTask(edit){
 /* ============================================================
    EVENT HANDLERS
    ============================================================ */
+async function syncAndRender(){
+  if(!S.settings.url) return;
+  await loadGs();
+  render();
+}
 function selRole(r){
   S.role=r;
   S.view=r==='helper'?'tasks':'dashboard';
   render();
-  if(S.settings.url)loadGs().then(render);
+  if(S.settings.url) loadGs().then(render);
   
   // Request FCM token for helpers
   if(r==='helper' && window.requestFCMToken){
@@ -1698,6 +1712,8 @@ function saveFCMConfig(){
 }
 function saveUrl(){S.settings.url=document.getElementById('set-url')?.value.trim()||'';ss();if(S.settings.url){toast('Menghubungkan...');loadGs().then(()=>{render();toast('<i class="ti ti-check"></i> Terhubung!','succ');});}else{toast('URL dihapus, mode lokal aktif');render();}}
 async function testConn(){const url=document.getElementById('set-url')?.value.trim();if(!url){toast('<i class="ti ti-alert-circle"></i> Masukkan URL dulu','err');return;}S.settings.url=url;toast('Menguji koneksi...');const r=await gsync('read',{});toast(r?'<i class="ti ti-check"></i> Koneksi berhasil!':'<i class="ti ti-x"></i> Gagal terhubung',r?'succ':'err');}
+function exportData(){const blob=new Blob([JSON.stringify({tasks:S.tasks,settings:S.settings,exportedAt:new Date().toISOString()},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`villatask-backup-${new Date().toISOString().slice(0,10)}.json`;a.click();toast('<i class="ti ti-check"></i> Data di-export!','succ');}
+function importData(e){const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=function(ev){try{const d=JSON.parse(ev.target.result);if(d.tasks&&Array.isArray(d.tasks)){S.tasks=d.tasks;if(d.settings)S.settings={...S.settings,...d.settings};ss();toast(`<i class="ti ti-check"></i> ${d.tasks.length} tugas di-import!`,'succ');render();}else{toast('<i class="ti ti-x"></i> Format file tidak valid','err');}}catch(err){toast('<i class="ti ti-x"></i> Gagal membaca file','err');}};reader.readAsText(file);e.target.value='';}
 function copyScript(){const c=document.getElementById('sc-code')?.innerText;if(c)navigator.clipboard.writeText(c).then(()=>toast('<i class="ti ti-copy"></i> Kode disalin!','succ')).catch(()=>toast('Salin manual dari kotak kode'));}
 
 function saveWAConfig(){
