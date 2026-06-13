@@ -1687,6 +1687,9 @@ function vSettings(){
       <button class="btn btn-p" style="flex:1" onclick="saveSupabase()"><i class="ti ti-link"></i>Hubungkan Supabase</button>
       <button class="btn btn-g" style="flex:1" onclick="testSupabase()"><i class="ti ti-plug"></i>Uji Koneksi</button>
     </div>
+    <div style="margin-top:8px">
+      <button class="btn btn-g btn-full" onclick="copySupabaseLink()"><i class="ti ti-share"></i>Salin Tautan Konfigurasi (bagikan ke perangkat lain)</button>
+    </div>
     <div style="margin-top:10px;font-size:11px;color:var(--text3)">
       <b>Cara setup:</b><br>
       1. Daftar/Login di <a href="https://supabase.com" target="_blank" style="color:var(--teal)">supabase.com</a> → Buat project baru<br>
@@ -1969,8 +1972,8 @@ function doCreate(){
   const assignedTo=document.getElementById('t-assigned')?.value.trim();
   const newTask=mkTask({title,location:document.getElementById('t-loc')?.value.trim(),description:document.getElementById('t-desc')?.value.trim(),assignedTo,priority:getP()});
   
-  // Send push notification to assigned helper
-  if(assignedTo && S.settings.url){
+  // Send push notification (GAS or Supabase-based)
+  if(assignedTo){
     sendPushNotification(assignedTo, newTask.id, newTask.title, newTask.priority);
   }
   
@@ -1978,25 +1981,26 @@ function doCreate(){
 }
 
 async function sendPushNotification(helperName, taskId, taskTitle, priority){
-  if(!S.settings.url) return;
-  try {
-    await fetch(S.settings.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        action: 'sendNotification', 
-        helperName, 
-        taskId, 
-        taskTitle, 
-        priority,
-        data: { taskId, action: 'open_task' }
-      })
-    });
-  } catch (e) {
-    console.warn('Push notification send failed:', e);
+  // Try GAS backend if configured
+  if(S.settings.url){
+    try {
+      await fetch(S.settings.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          action: 'sendNotification', 
+          helperName, 
+          taskId, 
+          taskTitle, 
+          priority,
+          data: { taskId, action: 'open_task' }
+        })
+      });
+    } catch (e) {
+      console.warn('Push notification send failed:', e);
+    }
   }
-  
-  // Send WhatsApp notification if configured
+  // Try WhatsApp direct (works with any backend)
   const waPhone=S.settings.waPhone;
   const waKey=S.settings.waApiKey;
   if(waPhone && waKey){
@@ -2093,6 +2097,13 @@ function saveSupabase(){
     toast('Supabase dinonaktifkan, mode lokal aktif');
     render();
   }
+}
+function copySupabaseLink(){
+  const url = S.settings.supabaseUrl;
+  const key = S.settings.supabaseAnonKey;
+  if (!url || !key) { toast('<i class="ti ti-alert-circle"></i> Konfigurasi Supabase dulu','err'); return; }
+  const link = window.location.origin + window.location.pathname + '?sb=' + encodeURIComponent(btoa(url + '||' + key));
+  navigator.clipboard.writeText(link).then(() => toast('<i class="ti ti-check"></i> Tautan disalin! Kirim ke perangkat lain','succ')).catch(() => toast('Salin manual: ' + link));
 }
 async function testSupabase(){
   const url = document.getElementById('set-sb-url')?.value.trim();
@@ -2253,6 +2264,23 @@ try{
   if(savedRole && (savedRole==='admin'||savedRole==='helper')){
     S.role=savedRole;
     S.view=savedRole==='helper'?'tasks':'dashboard';
+  }
+}catch(e){}
+
+// Auto-configure Supabase from URL params (shared config link)
+try{
+  const p = new URLSearchParams(window.location.search);
+  const sbParam = p.get('sb');
+  if (sbParam) {
+    const decoded = atob(decodeURIComponent(sbParam));
+    const sep = decoded.indexOf('||');
+    if (sep > 0) {
+      S.settings.supabaseUrl = decoded.substring(0, sep);
+      S.settings.supabaseAnonKey = decoded.substring(sep + 2);
+      ss();
+      // Clean URL so next load doesn't re-process
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
   }
 }catch(e){}
 
