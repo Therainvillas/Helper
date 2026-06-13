@@ -156,6 +156,12 @@ app.post('/api/sync', async (req, res) => {
       return res.json({ success: true });
     }
 
+    // CLEAN ALL TASKS
+    if (d.action === 'cleanAllTasks') {
+      await db.run('DELETE FROM tasks');
+      return res.json({ success: true });
+    }
+
     // REGISTER FCM DEVICE
     if (d.action === 'registerDevice') {
       const existing = await db.get('SELECT * FROM devices WHERE token = ?', [d.token]);

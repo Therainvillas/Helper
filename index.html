@@ -1601,7 +1601,7 @@ function vSettings(){
 
   <div class="scard" style="border-color:var(--crit-m)">
     <h3 style="color:var(--crit-d)"><i class="ti ti-alert-triangle" style="margin-right:6px"></i>Reset Data</h3>
-    <button class="btn btn-d btn-full" onclick="openC({ico:'dang',title:'Hapus Semua Data?',msg:'Semua tugas lokal dihapus. Data Google Sheets tidak terpengaruh.',ok:'Hapus Semua',okCls:'btn-d',onOk:()=>{S.tasks=[];ss();toast('Data lokal dihapus');render();}})"><i class="ti ti-trash"></i>Hapus Semua Data Lokal</button>
+    <button class="btn btn-d btn-full" onclick="openC({ico:'dang',title:'Hapus Semua Data?',msg:'Semua tugas di server backend dan lokal akan dihapus permanen.',ok:'Hapus Semua',okCls:'btn-d',onOk:async ()=>{S.tasks=[];ss();await gsync('cleanAllTasks',{});toast('Semua data berhasil dibersihkan','succ');render();}})"><i class="ti ti-trash"></i>Hapus Semua Data</button>
   </div>
   <div style="height:24px"></div>
 </div>`;}
@@ -2072,18 +2072,6 @@ try{
   }
 }catch(e){}
 
-if(S.tasks.length===0){
-  [{title:'Siapkan Kamar 5 untuk Tamu VIP',location:'Kamar 5',description:'Ganti sprei & handuk premium. Siapkan bunga & welcome letter. Tamu check-in pukul 14.00.',priority:'kritis'},
-  {title:'Antar Sarapan ke Kamar 2',location:'Kamar 2',description:'Continental breakfast — sudah dipesan sejak malam. Ketuk 3x.',priority:'kritis',status:'proses'},
-  {title:'Bersihkan & Cek Kimia Kolam Renang',location:'Kolam Renang',description:'Bersihkan daun, cek pH (7.2–7.8), kadar klorin. Lapor jika ada kerusakan.',priority:'tinggi'},
-  {title:'Perbaiki AC Kamar 3 (Bocor)',location:'Kamar 3',description:'Tamu melaporkan tetes air dari unit indoor. Hubungi teknisi jika perlu.',priority:'tinggi'},
-  {title:'Isi Ulang Minibar Kamar 3 & 4',location:'Kamar 3 & 4',description:'Lengkapi semua item sesuai standar villa. Catat di logbook.',priority:'menengah'},
-  {title:'Periksa Lampu Taman Belakang',location:'Area Taman',description:'Laporan: beberapa lampu jalur ke villa mati. Ganti bohlam jika perlu.',priority:'rendah'},
-  {title:'Cuci & Setrika Linen',location:'Laundry Room',description:'14 set sprei + 20 handuk dari checkout kemarin.',priority:'menengah',status:'selesai'}
-  ].forEach(d=>mkTask(d));
-  const last=S.tasks.find(x=>x.status==='selesai');if(last){last.completedAt=new Date(Date.now()-7200000).toISOString();}
-  ss();
-}
 render();
 
 // Start auto-sync if role is already set (returning user)
