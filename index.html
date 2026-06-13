@@ -17,9 +17,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
 
-<!-- Supabase Client -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
+<!-- Supabase Client is loaded via REST API directly (no library needed) -->
 <!-- Firebase config loader (saved from Settings, falls back to defaults below) -->
 <script>
 try{
@@ -114,15 +112,7 @@ window.__FCM.vapidKey=window.__FCM.vapidKey||"BB4kgGYwrxD_Od7QTSaFq3_HVZekqmz_NL
     const mode = getBackendMode();
     if (mode === 'supabase') {
       try {
-        const sb = sbInit();
-        if (sb) {
-          await sb.from('devices').upsert({
-            token,
-            helper_name: S.role === 'helper' ? (document.getElementById('helper-name')?.value || S.settings.villa + ' Helper') : '',
-            role: S.role || '',
-            created_at: new Date().toISOString()
-          }, { onConflict: 'token' });
-        }
+        await sbRegisterDevice(token, S.role === 'helper' ? (document.getElementById('helper-name')?.value || S.settings.villa + ' Helper') : '', S.role||'');
       } catch(e) { console.warn('Supabase token reg failed:', e); }
     } else if (S.settings.url) {
       try {
@@ -833,7 +823,6 @@ button,input,textarea,select{font-size:16px;} /* Prevents iOS auto-zoom */
 /* ============================================================
    STATE
    ============================================================ */
-let _supabase = null;
 const S={role:null,view:'login',tv:'list',tasks:[],filter:'all',search:'',sy:'off',settings:{url:'',villa:'Villa Asri',fcmApiKey:'',fcmProjectId:'',fcmAppId:'',fcmVapidKey:'',fcmAuthDomain:'',fcmBucket:'',fcmSenderId:'',waPhone:'',waApiKey:'',supabaseUrl:'',supabaseAnonKey:''}};
 const PO={kritis:0,tinggi:1,menengah:2,rendah:3};
 const PL={kritis:'Kritis',tinggi:'Tinggi',menengah:'Menengah',rendah:'Rendah'};
@@ -862,22 +851,31 @@ function getBackendMode() {
   return 'local';
 }
 
-// --- Supabase ---
-function sbInit() {
-  if (!S.settings.supabaseUrl || !S.settings.supabaseAnonKey) return null;
-  if (_supabase) return _supabase;
+// --- Supabase (via REST API - no library needed) ---
+function sbHeaders() {
+  return {
+    'apikey': S.settings.supabaseAnonKey,
+    'Authorization': 'Bearer ' + S.settings.supabaseAnonKey,
+    'Content-Type': 'application/json',
+    'Prefer': 'return=representation'
+  };
+}
+
+async function sbFetch(path, opts) {
   try {
-    _supabase = supabase.createClient(S.settings.supabaseUrl, S.settings.supabaseAnonKey);
-    return _supabase;
+    const r = await fetch(S.settings.supabaseUrl + '/rest/v1/' + path, {
+      ...opts,
+      headers: { ...sbHeaders(), ...(opts.headers||{}) }
+    });
+    if (!r.ok) return null;
+    return await r.json();
   } catch(e) { return null; }
 }
 
 async function sbLoad() {
-  const sb = sbInit();
-  if (!sb) return { tasks: [] };
-  const { data: active, error: err1 } = await sb.from('tasks').select('*').neq('status', 'selesai').order('priority', { ascending: true });
-  const { data: history, error: err2 } = await sb.from('tasks').select('*').eq('status', 'selesai').order('created_at', { ascending: false });
-  if (err1 || err2) return { tasks: null };
+  const active = await sbFetch('tasks?select=*&status=neq.selesai&order=priority.asc');
+  const history = await sbFetch('tasks?select=*&status=eq.selesai&order=created_at.desc');
+  if (!active) return { tasks: null };
   const map = (r) => ({
     id: r.id, title: r.title, description: r.description||'', location: r.location||'',
     priority: r.priority, status: r.status, assignedTo: r.assigned_to||'',
@@ -888,20 +886,19 @@ async function sbLoad() {
 }
 
 async function sbCreate(task) {
-  const sb = sbInit();
-  if (!sb) return null;
-  const { error } = await sb.from('tasks').insert({
-    id: task.id, title: task.title, description: task.description||'', location: task.location||'',
-    priority: task.priority, status: task.status||'belum', assigned_to: task.assignedTo||'',
-    photos: JSON.stringify(task.photos||[]), completion_note: task.completionNote||'',
-    created_at: task.createdAt, updated_at: task.updatedAt, completed_at: task.completedAt||null
+  const r = await sbFetch('tasks', {
+    method: 'POST',
+    body: JSON.stringify({
+      id: task.id, title: task.title, description: task.description||'', location: task.location||'',
+      priority: task.priority, status: task.status||'belum', assigned_to: task.assignedTo||'',
+      photos: JSON.stringify(task.photos||[]), completion_note: task.completionNote||'',
+      created_at: task.createdAt, updated_at: task.updatedAt, completed_at: task.completedAt||null
+    })
   });
-  return error ? null : { success: true };
+  return r ? { success: true } : null;
 }
 
 async function sbUpdate(id, data) {
-  const sb = sbInit();
-  if (!sb) return null;
   const payload = { updated_at: new Date().toISOString() };
   if (data.status) payload.status = data.status;
   if (data.completedAt) payload.completed_at = data.completedAt;
@@ -914,34 +911,30 @@ async function sbUpdate(id, data) {
     payload.completion_note = t.completionNote||'';
     if (t.completedAt) payload.completed_at = t.completedAt;
   }
-  const { error } = await sb.from('tasks').update(payload).eq('id', id);
-  return error ? null : { success: true };
+  const r = await sbFetch('tasks?id=eq.' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(payload) });
+  return r ? { success: true } : null;
 }
 
 async function sbDelete(id) {
-  const sb = sbInit();
-  if (!sb) return null;
-  const { error } = await sb.from('tasks').delete().eq('id', id);
-  return error ? null : { success: true };
+  const r = await sbFetch('tasks?id=eq.' + encodeURIComponent(id), { method: 'DELETE' });
+  return r ? { success: true } : null;
 }
 
-let sbSub = null;
-function sbSubscribe() {
-  const sb = sbInit();
-  if (!sb || sbSub) return;
-  sbSub = sb.channel('tasks-changes')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, async (payload) => {
-      if (!S.role) return;
-      const r = await sbLoad();
-      if (r && r.tasks) {
-        S.tasks = r.tasks;
-        ss();
-        render();
-      }
-    })
-    .subscribe();
+async function sbRegisterDevice(token, helperName, role) {
+  // Upsert: try insert, ignore conflict on token
+  const existing = await sbFetch('devices?token=eq.' + encodeURIComponent(token) + '&select=id');
+  if (existing && existing.length > 0) {
+    await sbFetch('devices?id=eq.' + existing[0].id, {
+      method: 'PATCH',
+      body: JSON.stringify({ helper_name: helperName||'', role: role||'', updated_at: new Date().toISOString() })
+    });
+  } else {
+    await sbFetch('devices', {
+      method: 'POST',
+      body: JSON.stringify({ token, helper_name: helperName||'', role: role||'', created_at: new Date().toISOString() })
+    });
+  }
 }
-function sbUnsubscribe() { if (sbSub) { sbSub.unsubscribe(); sbSub = null; } }
 
 // --- Generic sync ---
 async function gsync(act, data) {
@@ -1856,11 +1849,9 @@ async function syncAndRender(){
   render();
 }
 function startAutoSync(){
-  if (getBackendMode() === 'supabase') {
-    sbSubscribe();
-    return;
-  }
   if(autoTimer) clearInterval(autoTimer);
+  // Shorter polling for Supabase (faster sync), longer for others
+  const interval = getBackendMode() === 'supabase' ? 3000 : 8000;
   autoTimer = setInterval(async () => {
     if(!S.role) return;
     const oldHash = taskHash();
@@ -1875,10 +1866,9 @@ function startAutoSync(){
         render();
       }
     }
-  }, 8000);
+  }, interval);
 }
 function stopAutoSync(){
-  sbUnsubscribe();
   if(autoTimer){clearInterval(autoTimer);autoTimer=null;}
 }
 function selRole(r){
@@ -2088,7 +2078,6 @@ function saveSupabase(){
   if (url && key) {
     toast('Menghubungkan ke Supabase...');
     stopAutoSync();
-    _supabase = null;
     loadGs().then(() => {
       render();
       startAutoSync();
@@ -2106,7 +2095,6 @@ async function testSupabase(){
   S.settings.supabaseUrl = url;
   S.settings.supabaseAnonKey = key;
   ss();
-  _supabase = null;
   const r = await gsync('read',{});
   toast(r && r.tasks !== null ? '<i class="ti ti-check"></i> Koneksi Supabase berhasil!' : '<i class="ti ti-x"></i> Gagal terhubung ke Supabase', r && r.tasks !== null ? 'succ' : 'err');
 }
