@@ -825,27 +825,58 @@ const PCOLOR={kritis:'var(--crit)',tinggi:'var(--high)',menengah:'var(--med)',re
 /* ============================================================
    STORAGE
    ============================================================ */
+/* ============================================================
+   STORAGE
+   ============================================================ */
 function ls(){try{const t=localStorage.getItem('vt');if(t)S.tasks=JSON.parse(t);const s=localStorage.getItem('vs');if(s)S.settings={...S.settings,...JSON.parse(s)};}catch(e){}}
 function ss(){try{localStorage.setItem('vt',JSON.stringify(S.tasks));localStorage.setItem('vs',JSON.stringify(S.settings));}catch(e){}}
 
 /* ============================================================
-   GOOGLE SHEETS SYNC
+   BACKEND DATABASE SYNC
    ============================================================ */
+// Fallback default backend URL
+function getBackendUrl() {
+  return S.settings.url || 'http://localhost:3000';
+}
+
 async function gsync(act,data){
-  if(!S.settings.url)return null;
+  const backendUrl = getBackendUrl();
   S.sy='sync';updSy();
   try{
     let r;
-    if(act==='read'||act==='getHistory'){
-      const actionParam = act==='getHistory' ? 'getHistory' : 'getTasks';
-      r=await fetch(S.settings.url+'?action='+actionParam,{redirect:'follow'});
+    if (backendUrl.includes('/api/sync') || backendUrl.includes('/api/tasks') || backendUrl.includes(':3000')) {
+      // Node.js Backend API
+      const rootUrl = backendUrl.endsWith('/') ? backendUrl.slice(0, -1) : backendUrl;
+      const apiSyncUrl = rootUrl.includes('/api/') ? rootUrl : rootUrl + '/api/sync';
+      const apiTasksUrl = rootUrl.includes('/api/') ? rootUrl.replace('/sync', '/tasks') : rootUrl + '/api/tasks';
+
+      if(act==='read'||act==='getHistory'){
+        const actionParam = act==='getHistory' ? 'getHistory' : 'getTasks';
+        r=await fetch(apiTasksUrl+'?action='+actionParam);
+      } else {
+        r=await fetch(apiSyncUrl,{
+          method:'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:JSON.stringify({action:act,...data})
+        });
+      }
     } else {
-      r=await fetch(S.settings.url,{method:'POST',body:JSON.stringify({action:act,...data}),redirect:'follow'});
+      // Legacy Google Sheets Sync
+      if(act==='read'||act==='getHistory'){
+        const actionParam = act==='getHistory' ? 'getHistory' : 'getTasks';
+        r=await fetch(backendUrl+'?action='+actionParam,{redirect:'follow'});
+      } else {
+        r=await fetch(backendUrl,{method:'POST',body:JSON.stringify({action:act,...data}),redirect:'follow'});
+      }
     }
     const j=await r.json();
     S.sy='on';updSy();
     return j;
-  }catch(e){S.sy='off';updSy();return null;}
+  }catch(e){
+    console.error('Sync failed:', e);
+    S.sy='off';updSy();
+    return null;
+  }
 }
 async function loadGs(){
   const activeR = await gsync('read',{});
@@ -1668,14 +1699,13 @@ let autoTimer = null;
 let lastHash = '';
 function taskHash(){return S.tasks.map(t=>t.id+':'+t.status+':'+t.updatedAt).join('|');}
 async function syncAndRender(){
-  if(!S.settings.url) return;
   await loadGs();
   render();
 }
 function startAutoSync(){
   if(autoTimer) clearInterval(autoTimer);
   autoTimer = setInterval(async () => {
-    if(!S.settings.url || !S.role) return;
+    if(!S.role) return;
     const oldHash = taskHash();
     const [r, hR] = await Promise.all([gsync('read',{}), gsync('getHistory',{})]);
     if(r && r.tasks){
@@ -1699,12 +1729,10 @@ function selRole(r){
   // Save role to localStorage so it persists across sessions
   try{localStorage.setItem('vr',r);}catch(e){}
   render();
-  if(S.settings.url){
-    loadGs().then(() => {
-      render();
-      startAutoSync();
-    });
-  }
+  loadGs().then(() => {
+    render();
+    startAutoSync();
+  });
   
   // Request FCM token for helpers
   if(r==='helper' && window.requestFCMToken){
@@ -1724,7 +1752,7 @@ function refreshList(){
   }
 }
 
-async function doRefresh(){toast('<i class="ti ti-refresh"></i> Memperbarui...');if(S.settings.url)await loadGs();render();toast('<i class="ti ti-check"></i> Diperbarui','succ');}
+async function doRefresh(){toast('<i class="ti ti-refresh"></i> Memperbarui...');await loadGs();render();toast('<i class="ti ti-check"></i> Diperbarui','succ');}
 
 function openCreate(){openM(modalTask(null));}
 function openEdit(id){const t=S.tasks.find(x=>x.id===id);if(t)openM(modalTask(t));}
@@ -2026,7 +2054,7 @@ window.addEventListener('offline',updateOnlineStatus);
    VISIBILITY-BASED SYNC (resumes sync when switching back to tab)
    ============================================================ */
 document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='visible' && S.role && S.settings.url){
+  if(document.visibilityState==='visible' && S.role){
     loadGs().then(()=>render());
   }
 });
@@ -2059,7 +2087,7 @@ if(S.tasks.length===0){
 render();
 
 // Start auto-sync if role is already set (returning user)
-if(S.role && S.settings.url){
+if(S.role){
   loadGs().then(()=>{render();startAutoSync();});
 }
 </script>
