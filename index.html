@@ -17,6 +17,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
 
+<!-- Supabase Client -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
 <!-- Firebase config loader (saved from Settings, falls back to defaults below) -->
 <script>
 try{
@@ -108,15 +111,29 @@ window.__FCM.vapidKey=window.__FCM.vapidKey||"BB4kgGYwrxD_Od7QTSaFq3_HVZekqmz_NL
   }
 
   async function registerTokenWithBackend(token) {
-    if (!S.settings.url) return;
-    try {
-      await fetch(S.settings.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'registerDevice', token, role: S.role })
-      });
-    } catch (e) {
-      console.warn('Token registration failed:', e);
+    const mode = getBackendMode();
+    if (mode === 'supabase') {
+      try {
+        const sb = sbInit();
+        if (sb) {
+          await sb.from('devices').upsert({
+            token,
+            helper_name: S.role === 'helper' ? (document.getElementById('helper-name')?.value || S.settings.villa + ' Helper') : '',
+            role: S.role || '',
+            created_at: new Date().toISOString()
+          }, { onConflict: 'token' });
+        }
+      } catch(e) { console.warn('Supabase token reg failed:', e); }
+    } else if (S.settings.url) {
+      try {
+        await fetch(S.settings.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'registerDevice', token, role: S.role })
+        });
+      } catch (e) {
+        console.warn('Token registration failed:', e);
+      }
     }
   }
 
@@ -816,7 +833,8 @@ button,input,textarea,select{font-size:16px;} /* Prevents iOS auto-zoom */
 /* ============================================================
    STATE
    ============================================================ */
-const S={role:null,view:'login',tv:'list',tasks:[],filter:'all',search:'',sy:'off',settings:{url:'',villa:'Villa Asri',fcmApiKey:'',fcmProjectId:'',fcmAppId:'',fcmVapidKey:'',fcmAuthDomain:'',fcmBucket:'',fcmSenderId:'',waPhone:'',waApiKey:''}};
+let _supabase = null;
+const S={role:null,view:'login',tv:'list',tasks:[],filter:'all',search:'',sy:'off',settings:{url:'',villa:'Villa Asri',fcmApiKey:'',fcmProjectId:'',fcmAppId:'',fcmVapidKey:'',fcmAuthDomain:'',fcmBucket:'',fcmSenderId:'',waPhone:'',waApiKey:'',supabaseUrl:'',supabaseAnonKey:''}};
 const PO={kritis:0,tinggi:1,menengah:2,rendah:3};
 const PL={kritis:'Kritis',tinggi:'Tinggi',menengah:'Menengah',rendah:'Rendah'};
 const SL={belum:'Belum Dimulai',proses:'Sedang Dikerjakan',selesai:'Selesai'};
@@ -834,60 +852,174 @@ function ss(){try{localStorage.setItem('vt',JSON.stringify(S.tasks));localStorag
 /* ============================================================
    BACKEND DATABASE SYNC
    ============================================================ */
-// Fallback default backend URL
-function getBackendUrl() {
-  return S.settings.url || 'http://localhost:3000';
+function getBackendMode() {
+  if (S.settings.supabaseUrl && S.settings.supabaseAnonKey) return 'supabase';
+  if (S.settings.url) {
+    if (S.settings.url.includes(':3000') || S.settings.url.includes('/api/')) return 'node';
+    if (S.settings.url.includes('script.google.com')) return 'gas';
+    return 'gas';
+  }
+  return 'local';
 }
 
-async function gsync(act,data){
-  const backendUrl = getBackendUrl();
-  S.sy='sync';updSy();
+// --- Supabase ---
+function sbInit() {
+  if (!S.settings.supabaseUrl || !S.settings.supabaseAnonKey) return null;
+  if (_supabase) return _supabase;
+  try {
+    _supabase = supabase.createClient(S.settings.supabaseUrl, S.settings.supabaseAnonKey);
+    return _supabase;
+  } catch(e) { return null; }
+}
+
+async function sbLoad() {
+  const sb = sbInit();
+  if (!sb) return { tasks: [] };
+  const { data: active, error: err1 } = await sb.from('tasks').select('*').neq('status', 'selesai').order('priority', { ascending: true });
+  const { data: history, error: err2 } = await sb.from('tasks').select('*').eq('status', 'selesai').order('created_at', { ascending: false });
+  if (err1 || err2) return { tasks: null };
+  const map = (r) => ({
+    id: r.id, title: r.title, description: r.description||'', location: r.location||'',
+    priority: r.priority, status: r.status, assignedTo: r.assigned_to||'',
+    photos: typeof r.photos === 'string' ? JSON.parse(r.photos||'[]') : (r.photos||[]),
+    completionNote: r.completion_note||'', createdAt: r.created_at, updatedAt: r.updated_at, completedAt: r.completed_at
+  });
+  return { tasks: [...(active||[]).map(map), ...(history||[]).map(map)] };
+}
+
+async function sbCreate(task) {
+  const sb = sbInit();
+  if (!sb) return null;
+  const { error } = await sb.from('tasks').insert({
+    id: task.id, title: task.title, description: task.description||'', location: task.location||'',
+    priority: task.priority, status: task.status||'belum', assigned_to: task.assignedTo||'',
+    photos: JSON.stringify(task.photos||[]), completion_note: task.completionNote||'',
+    created_at: task.createdAt, updated_at: task.updatedAt, completed_at: task.completedAt||null
+  });
+  return error ? null : { success: true };
+}
+
+async function sbUpdate(id, data) {
+  const sb = sbInit();
+  if (!sb) return null;
+  const payload = { updated_at: new Date().toISOString() };
+  if (data.status) payload.status = data.status;
+  if (data.completedAt) payload.completed_at = data.completedAt;
+  if (data.task) {
+    const t = data.task;
+    payload.title = t.title; payload.description = t.description||'';
+    payload.location = t.location||''; payload.priority = t.priority;
+    payload.assigned_to = t.assignedTo||'';
+    payload.photos = JSON.stringify(t.photos||[]);
+    payload.completion_note = t.completionNote||'';
+    if (t.completedAt) payload.completed_at = t.completedAt;
+  }
+  const { error } = await sb.from('tasks').update(payload).eq('id', id);
+  return error ? null : { success: true };
+}
+
+async function sbDelete(id) {
+  const sb = sbInit();
+  if (!sb) return null;
+  const { error } = await sb.from('tasks').delete().eq('id', id);
+  return error ? null : { success: true };
+}
+
+let sbSub = null;
+function sbSubscribe() {
+  const sb = sbInit();
+  if (!sb || sbSub) return;
+  sbSub = sb.channel('tasks-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, async (payload) => {
+      if (!S.role) return;
+      const r = await sbLoad();
+      if (r && r.tasks) {
+        S.tasks = r.tasks;
+        ss();
+        render();
+      }
+    })
+    .subscribe();
+}
+function sbUnsubscribe() { if (sbSub) { sbSub.unsubscribe(); sbSub = null; } }
+
+// --- Generic sync ---
+async function gsync(act, data) {
+  const mode = getBackendMode();
+  S.sy = 'sync'; updSy();
+  
+  // Supabase mode
+  if (mode === 'supabase') {
+    try {
+      let result;
+      if (act === 'read' || act === 'getHistory') {
+        result = await sbLoad();
+      } else if (act === 'createTask') {
+        result = await sbCreate(data.task || data);
+      } else if (act === 'updateTask' || act === 'updateTaskFull') {
+        result = await sbUpdate(data.id || (data.task && data.task.id), data);
+      } else if (act === 'deleteTask') {
+        result = await sbDelete(data.id);
+      }
+      if (result && result.tasks !== undefined) {
+        S.sy = 'on'; updSy();
+        return result;
+      }
+      if (result && result.success) {
+        S.sy = 'on'; updSy();
+        return result;
+      }
+      S.sy = 'off'; updSy();
+      return null;
+    } catch(e) { S.sy = 'off'; updSy(); return null; }
+  }
+  
+  // Legacy modes (GAS / Node)
+  const backendUrl = S.settings.url || '';
   try{
     let r;
-    if (backendUrl.includes('/api/sync') || backendUrl.includes('/api/tasks') || backendUrl.includes(':3000')) {
-      // Node.js Backend API
+    if (mode === 'node') {
       const rootUrl = backendUrl.endsWith('/') ? backendUrl.slice(0, -1) : backendUrl;
-      const apiSyncUrl = rootUrl.includes('/api/') ? rootUrl : rootUrl + '/api/sync';
-      const apiTasksUrl = rootUrl.includes('/api/') ? rootUrl.replace('/sync', '/tasks') : rootUrl + '/api/tasks';
-
-      if(act==='read'||act==='getHistory'){
-        const actionParam = act==='getHistory' ? 'getHistory' : 'getTasks';
-        r=await fetch(apiTasksUrl+'?action='+actionParam);
+      const apiUrl = rootUrl.includes('/api/') ? rootUrl : rootUrl + '/api/sync';
+      if (act === 'read' || act === 'getHistory') {
+        const p = act === 'getHistory' ? 'getHistory' : 'getTasks';
+        r = await fetch(apiUrl.replace('/sync', '/tasks') + '?action=' + p);
       } else {
-        r=await fetch(apiSyncUrl,{
-          method:'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:JSON.stringify({action:act,...data})
-        });
+        r = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({action:act,...data}) });
       }
     } else {
-      // Legacy Google Sheets Sync
-      if(act==='read'||act==='getHistory'){
-        const actionParam = act==='getHistory' ? 'getHistory' : 'getTasks';
-        r=await fetch(backendUrl+'?action='+actionParam,{redirect:'follow'});
+      if (act === 'read' || act === 'getHistory') {
+        r = await fetch(backendUrl + '?action=' + (act === 'getHistory' ? 'getHistory' : 'getTasks'), { redirect: 'follow' });
       } else {
-        r=await fetch(backendUrl,{method:'POST',body:JSON.stringify({action:act,...data}),redirect:'follow'});
+        r = await fetch(backendUrl, { method: 'POST', body: JSON.stringify({action:act,...data}), redirect: 'follow' });
       }
     }
-    const j=await r.json();
-    S.sy='on';updSy();
+    const j = await r.json();
+    S.sy = 'on'; updSy();
     return j;
-  }catch(e){
-    console.error('Sync failed:', e);
-    S.sy='off';updSy();
+  } catch(e) {
+    S.sy = 'off'; updSy();
     return null;
   }
 }
+
 async function loadGs(){
-  const activeR = await gsync('read',{});
-  if(activeR && activeR.tasks){
-    const historyR = await gsync('getHistory',{});
-    S.tasks = activeR.tasks;
-    if(historyR && historyR.tasks) S.tasks = [...S.tasks, ...historyR.tasks];
+  const r = await gsync('read',{});
+  if (r && r.tasks) {
+    const hR = await gsync('getHistory',{});
+    S.tasks = r.tasks;
+    if (hR && hR.tasks) S.tasks = [...S.tasks, ...hR.tasks];
     ss();
   }
 }
-function updSy(){const el=document.getElementById('sync-dot');const el2=document.getElementById('sync-lbl');if(!el)return;el.className='sd '+S.sy;if(el2)el2.textContent=S.sy==='on'?'Tersinkron':S.sy==='sync'?'Menyinkron...':'Offline';}
+
+function updSy(){
+  const el = document.getElementById('sync-dot');
+  const el2 = document.getElementById('sync-lbl');
+  if (!el) return;
+  el.className = 'sd ' + S.sy;
+  if (el2) el2.textContent = S.sy === 'on' ? 'Tersinkron' : S.sy === 'sync' ? 'Menyinkron...' : 'Offline';
+}
 
 /* ============================================================
    TASK HELPERS
@@ -1544,7 +1676,28 @@ function vSettings(){
   </div>
 
   <div class="scard">
-    <h3><i class="ti ti-bell" style="color:var(--teal);margin-right:6px"></i>Push Notifications (Firebase FCM)</h3>
+    <h3><i class="ti ti-database" style="color:#3ECF8E;margin-right:6px"></i>Integrasi Supabase (PostgreSQL)</h3>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Sinkron instan antar perangkat via Supabase — <b>real-time, tanpa refresh manual</b></div>
+    <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg);border-radius:var(--r8);margin-bottom:14px;font-size:13px;color:var(--text2)">
+      <span class="sd ${getBackendMode()==='supabase'?'on':'off'}"></span>
+      <span>${getBackendMode()==='supabase'?'Terhubung ke Supabase':'Belum terhubung'}</span>
+    </div>
+    <div class="fg"><label class="flbl">Supabase URL</label><input class="finput" type="url" id="set-sb-url" value="${S.settings.supabaseUrl}" placeholder="https://your-project.supabase.co"></div>
+    <div class="fg"><label class="flbl">Supabase Anon Key</label><input class="finput" type="text" id="set-sb-key" value="${S.settings.supabaseAnonKey}" placeholder="eyJhbGciOi..."></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-p" style="flex:1" onclick="saveSupabase()"><i class="ti ti-link"></i>Hubungkan Supabase</button>
+      <button class="btn btn-g" style="flex:1" onclick="testSupabase()"><i class="ti ti-plug"></i>Uji Koneksi</button>
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--text3)">
+      <b>Cara setup:</b><br>
+      1. Daftar/Login di <a href="https://supabase.com" target="_blank" style="color:var(--teal)">supabase.com</a> → Buat project baru<br>
+      2. Di project, buka SQL Editor → jalankan SQL dari file <code>supabase-schema.sql</code><br>
+      3. Buka Settings → API → salin <b>Project URL</b> dan <b>anon public key</b><br>
+      4. Paste di atas → klik Hubungkan
+    </div>
+  </div>
+
+  <div class="scard">
     <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Konfigurasi untuk notifikasi real-time ke helper Android</div>
     <div class="fg"><label class="flbl">API Key</label><input class="finput" type="text" id="set-fcm-api" value="${S.settings.fcmApiKey||'AIzaSyBJw8Bp4roUjaU-qniJzEiYTOGeYAFPh98'}" placeholder="AIzaSy..."></div>
     <div class="fg"><label class="flbl">Project ID</label><input class="finput" type="text" id="set-fcm-project" value="${S.settings.fcmProjectId||'helper-3931b'}" placeholder="your-project-id"></div>
@@ -1703,6 +1856,10 @@ async function syncAndRender(){
   render();
 }
 function startAutoSync(){
+  if (getBackendMode() === 'supabase') {
+    sbSubscribe();
+    return;
+  }
   if(autoTimer) clearInterval(autoTimer);
   autoTimer = setInterval(async () => {
     if(!S.role) return;
@@ -1721,6 +1878,7 @@ function startAutoSync(){
   }, 8000);
 }
 function stopAutoSync(){
+  sbUnsubscribe();
   if(autoTimer){clearInterval(autoTimer);autoTimer=null;}
 }
 function selRole(r){
@@ -1920,6 +2078,38 @@ async function testConn(){const url=document.getElementById('set-url')?.value.tr
 function exportData(){const blob=new Blob([JSON.stringify({tasks:S.tasks,settings:S.settings,exportedAt:new Date().toISOString()},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`villatask-backup-${new Date().toISOString().slice(0,10)}.json`;a.click();toast('<i class="ti ti-check"></i> Data di-export!','succ');}
 function importData(e){const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=function(ev){try{const d=JSON.parse(ev.target.result);if(d.tasks&&Array.isArray(d.tasks)){S.tasks=d.tasks;if(d.settings)S.settings={...S.settings,...d.settings};ss();toast(`<i class="ti ti-check"></i> ${d.tasks.length} tugas di-import!`,'succ');render();}else{toast('<i class="ti ti-x"></i> Format file tidak valid','err');}}catch(err){toast('<i class="ti ti-x"></i> Gagal membaca file','err');}};reader.readAsText(file);e.target.value='';}
 function copyScript(){const c=document.getElementById('sc-code')?.innerText;if(c)navigator.clipboard.writeText(c).then(()=>toast('<i class="ti ti-copy"></i> Kode disalin!','succ')).catch(()=>toast('Salin manual dari kotak kode'));}
+
+function saveSupabase(){
+  const url = document.getElementById('set-sb-url')?.value.trim()||'';
+  const key = document.getElementById('set-sb-key')?.value.trim()||'';
+  S.settings.supabaseUrl = url;
+  S.settings.supabaseAnonKey = key;
+  ss();
+  if (url && key) {
+    toast('Menghubungkan ke Supabase...');
+    stopAutoSync();
+    _supabase = null;
+    loadGs().then(() => {
+      render();
+      startAutoSync();
+      toast('<i class="ti ti-check"></i> Terhubung ke Supabase!', 'succ');
+    });
+  } else {
+    toast('Supabase dinonaktifkan, mode lokal aktif');
+    render();
+  }
+}
+async function testSupabase(){
+  const url = document.getElementById('set-sb-url')?.value.trim();
+  const key = document.getElementById('set-sb-key')?.value.trim();
+  if (!url || !key) { toast('<i class="ti ti-alert-circle"></i> Isi URL dan Anon Key dulu','err'); return; }
+  S.settings.supabaseUrl = url;
+  S.settings.supabaseAnonKey = key;
+  ss();
+  _supabase = null;
+  const r = await gsync('read',{});
+  toast(r && r.tasks !== null ? '<i class="ti ti-check"></i> Koneksi Supabase berhasil!' : '<i class="ti ti-x"></i> Gagal terhubung ke Supabase', r && r.tasks !== null ? 'succ' : 'err');
+}
 
 function saveWAConfig(){
   S.settings.waPhone=document.getElementById('set-wa-phone')?.value.trim();
