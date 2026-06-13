@@ -872,17 +872,23 @@ async function sbFetch(path, opts) {
   } catch(e) { return null; }
 }
 
-async function sbLoad() {
+async function sbLoad(act) {
+  if (act === 'getHistory') {
+    const history = await sbFetch('tasks?select=*&status=eq.selesai&order=created_at.desc');
+    if (!history) return { tasks: null };
+    return { tasks: (history||[]).map(mapTask) };
+  }
   const active = await sbFetch('tasks?select=*&status=neq.selesai&order=priority.asc');
-  const history = await sbFetch('tasks?select=*&status=eq.selesai&order=created_at.desc');
   if (!active) return { tasks: null };
-  const map = (r) => ({
+  return { tasks: (active||[]).map(mapTask) };
+}
+function mapTask(r) {
+  return {
     id: r.id, title: r.title, description: r.description||'', location: r.location||'',
     priority: r.priority, status: r.status, assignedTo: r.assigned_to||'',
     photos: typeof r.photos === 'string' ? JSON.parse(r.photos||'[]') : (r.photos||[]),
     completionNote: r.completion_note||'', createdAt: r.created_at, updatedAt: r.updated_at, completedAt: r.completed_at
-  });
-  return { tasks: [...(active||[]).map(map), ...(history||[]).map(map)] };
+  };
 }
 
 async function sbCreate(task) {
@@ -946,7 +952,7 @@ async function gsync(act, data) {
     try {
       let result;
       if (act === 'read' || act === 'getHistory') {
-        result = await sbLoad();
+        result = await sbLoad(act);
       } else if (act === 'createTask') {
         result = await sbCreate(data.task || data);
       } else if (act === 'updateTask' || act === 'updateTaskFull') {
